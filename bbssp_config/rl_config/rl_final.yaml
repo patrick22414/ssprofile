@@ -1,0 +1,114 @@
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+   # Schedulable attributes: 
+   num_cell_groups: 12
+   num_layers: 12
+   cell_layout: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+   reduce_cell_groups: [1, 3, 5, 9]
+   num_steps: 1
+   num_init_nodes: 1
+   num_node_inputs: 1
+   shared_primitives:
+   - block_0
+   - block_1
+   - block_2
+   - block_3
+   - block_4
+   - block_5
+   - block_6
+   - block_7
+   - block_8
+   #cell_shared_primitives: [[block_3, block_4], [block_0, block_1, block_2, block_3, block_4, block_5, block_6, block_8], [block_1, block_3], [block_1, block_2, block_3, block_4, block_5, block_7, block_8], [block_0, block_3, block_4, block_6, block_7]]
+# ---- End Type cnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  # cutout: 16
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component final_model ----
+# ---- Type cnn_genotype ----
+final_model_type: cnn_final_model
+final_model_cfg:
+  # Schedulable attributes: dropout_path_rate
+  #genotypes: reduce_0=[('block_4', 0, 1)], reduce_1=[('block_2', 0, 1)], reduce_2=[('block_3', 0, 1)], reduce_3=[('block_3', 0, 1)], reduce_4=[('block_6', 0, 1)]
+  genotypes: normal_0=[('Resblock_1', 0, 1)], reduce_1=[('Resblock_0', 0, 1)], normal_2=[('Resblock_8', 0, 1)], reduce_3=[('Resblock_4', 0, 1)], normal_4=[('Resblock_2', 0, 1)], reduce_5=[('Resblock_2', 0, 1)], normal_6=[('Resblock_7', 0, 1)], normal_7=[('Resblock_2', 0, 1)], normal_8=[('Resblock_7', 0, 1)], reduce_9=[('Resblock_6', 0, 1)], normal_10=[('Resblock_2', 0, 1)], normal_11=[('Resblock_0', 0, 1)]
+
+  # auxiliary_cfg: null
+  auxiliary_head: false
+  use_stem: true
+  cell_use_preprocess: false
+  # dropout_path_rate: 0.2
+  dropout_path_rate: 0.0
+  dropout_rate: 0.1
+  #dropout_rate: 0.0
+  init_channels: 16
+  num_classes: 10
+  schedule_cfg:
+    # dropout_path_rate:
+    #   type: add
+    #   start: 0
+    #   every: 1
+    #   step: 0.000333 # 0.2/600
+  stem_multiplier: 1
+  cell_group_kwargs:
+  - C_in: 16
+    C_out: 16
+  - C_in: 16
+    C_out: 24
+  - C_in: 24
+    C_out: 24
+  - C_in: 24
+    C_out: 32
+  - C_in: 32
+    C_out: 32
+  - C_in: 32
+    C_out: 64
+  - C_in: 64
+    C_out: 64
+  - C_in: 64
+    C_out: 112
+  - C_in: 112
+    C_out: 112
+  - C_in: 112
+    C_out: 184
+  - C_in: 184
+    C_out: 184
+  - C_in: 184
+    C_out: 352
+ 
+# ---- End Type cnn_genotype ----
+## ---- End Component final_model ----
+
+objective_type: classification
+objective_cfg: {}
+
+## ---- Component final_trainer ----
+# ---- Type cnn_trainer ----
+final_trainer_type: cnn_trainer
+final_trainer_cfg:
+  # Schedulable attributes: 
+  auxiliary_head: false
+  # auxiliary_weight: 0.4
+  batch_size: 128
+  epochs: 200
+  grad_clip: 5.0
+  learning_rate: 0.05
+  momentum: 0.9
+  no_bias_decay: false
+  optimizer_scheduler:
+    eta_min: 0.001
+    T_max: 200
+    type: CosineAnnealingLR
+  schedule_cfg: null
+  warmup_epochs: 0
+  weight_decay: 0.0003
+# ---- End Type cnn_trainer ----
+## ---- End Component final_trainer ----
