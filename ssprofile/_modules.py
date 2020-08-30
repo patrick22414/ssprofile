@@ -12,19 +12,12 @@ class MobileBlock(nn.Module):
         super(MobileBlock, self).__init__()
         # assert not bn, "not support bn for now"
         bias_flag = not bn
-        if kernel_size == 1:
-            padding = 0
-        elif kernel_size == 3:
-            padding = 1
-        elif kernel_size == 5:
-            padding = 2
-        elif kernel_size == 7:
-            padding = 3
-        else:
+        if kernel_size not in (1, 3, 5, 7):
             raise ValueError("Not supported kernel_size %d" % kernel_size)
+        padding = kernel_size // 2
         inner_dim = int(C_in * expansion)
         if inner_dim == 0:
-            inner_dim = 1
+            inner_dim = 1  # FIXME: what is this?
         self.op = nn.Sequential(
             nn.Conv2d(C_in, inner_dim, 1, stride=1, padding=0, bias=bias_flag),
             nn.BatchNorm2d(inner_dim),
@@ -57,19 +50,12 @@ class ResBlock(nn.Module):
         super(ResBlock, self).__init__()
         # assert not bn, "not support bn for now"
         bias_flag = not bn
-        if kernel_size == 1:
-            padding = 0
-        elif kernel_size == 3:
-            padding = 1
-        elif kernel_size == 5:
-            padding = 2
-        elif kernel_size == 7:
-            padding = 3
-        else:
+        if kernel_size not in (1, 3, 5, 7):
             raise ValueError("Not supported kernel_size %d" % kernel_size)
+        padding = kernel_size // 2
         inner_dim = int(C_in * expansion)
         if inner_dim == 0:
-            inner_dim = 1
+            inner_dim = 1  # FIXME: what is this?
         self.opa = nn.Sequential(
             nn.Conv2d(C_in, inner_dim, 1, stride=1, padding=0, bias=bias_flag),
             nn.BatchNorm2d(inner_dim),
@@ -126,3 +112,64 @@ class VGGBlock(nn.Module):
 
 
 # === End of copied code ===
+
+
+VGG_BLOCK_PARAMS = [
+    {"kernel_list": [1]},
+    {"kernel_list": [3]},
+    {"kernel_list": [1, 3]},
+    {"kernel_list": [5]},
+    {"kernel_list": [1, 5]},
+    {"kernel_list": [3, 3]},
+    {"kernel_list": [1, 3, 3]},
+    {"kernel_list": [7]},
+    {"kernel_list": [1, 7]},
+    {"kernel_list": [3, 5]},
+    {"kernel_list": [1, 3, 5]},
+    {"kernel_list": [3, 3, 3]},
+    {"kernel_list": [1, 3, 3, 3]},
+]
+
+RES_BLOCK_PARAMS = [
+    {"expansion": 1, "kernel_size": 3},
+    {"expansion": 1, "kernel_size": 5},
+    {"expansion": 1, "kernel_size": 7},
+    {"expansion": 2, "kernel_size": 3},
+    {"expansion": 2, "kernel_size": 5},
+    {"expansion": 2, "kernel_size": 7},
+    {"expansion": 4, "kernel_size": 3},
+    {"expansion": 4, "kernel_size": 5},
+    {"expansion": 4, "kernel_size": 7},
+]
+
+MOBILE_BLOCK_PARAMS = [
+    {"kernel_size": 3, "expansion": 1},
+    {"kernel_size": 3, "expansion": 3},
+    {"kernel_size": 3, "expansion": 6},
+    {"kernel_size": 5, "expansion": 1},
+    {"kernel_size": 5, "expansion": 3},
+    {"kernel_size": 5, "expansion": 6},
+    {"kernel_size": 7, "expansion": 1},
+    {"kernel_size": 7, "expansion": 3},
+    {"kernel_size": 7, "expansion": 6},
+]
+
+
+def primitive_factory(primitive: str, C_in: int, C_out: int, stride: int):
+    ss, idx = primitive.split("block_")
+    idx = int(idx)
+
+    if ss == "VGG":
+        return VGGBlock(C_in, C_out, stride=stride, **VGG_BLOCK_PARAMS[idx])
+    elif ss == "Res":
+        return ResBlock(C_in, C_out, stride=stride, **RES_BLOCK_PARAMS[idx])
+    elif ss == "Mobile":
+        return MobileBlock(C_in, C_out, stride=stride, **MOBILE_BLOCK_PARAMS[idx])
+    else:
+        raise NotImplementedError(f"Search space {ss} not implemented")
+
+
+# TEST
+if __name__ == "__main__":
+    block = primitive_factory("VGGblock_3", C_in=10, C_out=20, stride=1)
+    print(block)

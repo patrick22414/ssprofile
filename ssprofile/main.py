@@ -11,6 +11,25 @@ from _profiler import SSProfiler
 # Block names must be {search space name}block_{idx}
 DEFAULT_BLOCKS = {"Mobile": "Mobileblock_0", "Res": "Resblock_0", "VGG": "VGGblock_0"}
 
+# TODO: this cfg block should be written in YAML files
+SS_PROFILER_CFG = {
+    "first_train_epochs": 20,
+    "first_train_optimizer": {
+        "type": "SGD",
+        "lr": 0.1,
+        "momentum": 0.9,
+        "weight_decay": 0.0001,
+    },
+    "finetune_epochs": 5,
+    "finetune_optimizer": {
+        "type": "SGD",
+        "lr": 0.05,
+        "momentum": 0.9,
+        "weight_decay": 0.0001,
+    },
+    "cost_latency_coeff": 0.5,
+}
+
 
 def main():
     parser = argparse.ArgumentParser(description="Search space profiling")
