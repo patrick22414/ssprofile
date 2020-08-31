@@ -6,7 +6,7 @@ from pprint import pprint
 import click
 import yaml
 
-from _profiler import SSProfiler
+from _profiler import SearchSpaceProfiler
 
 # Block names must be {search space name}block_{idx}
 DEFAULT_BLOCKS = {"Mobile": "Mobileblock_0", "Res": "Resblock_0", "VGG": "VGGblock_0"}
@@ -123,7 +123,9 @@ def init_profiler_from_cfg(cfg: dict):
     print(c_out_list)
     pprint(cfg)
 
-    return SSProfiler()
+    return SearchSpaceProfiler(
+        # TODO
+    )
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 import torch
 
-from _networks import SSBaseNetwork
+from _networks import SearchSpaceBaseNetwork
 
 
-class SSProfiler:
+class SearchSpaceProfiler:
     def __init__(
         self,
         search_spaces: Dict[str, List[str]],  # eg {"ss0": ["block0", ...], "ss1": ...}
@@ -44,6 +44,23 @@ class SSProfiler:
         self.accuracy_table: Dict[str, float] = {}
         self.latency_table: Dict[str, float] = {}
 
+    def profile_accuracy(self):
+        # 1. For each search space
+        # 2. Construct a SSBN
+        # 3. SSBN first train and test
+        # 4. SSBN swap blocks, finetune, and test
+        # 5. write results to accuracy_table
+        pass
+
+    def profile_latency(self):
+        pass
+
+    def profile(self):
+        # profile accuracy and latency
+        # compute costs
+        # sort and select search space and blocks
+        pass
+
     def first_train(self):
         pass
 
@@ -60,7 +77,7 @@ def init_optimizer_from_cfg(cfg: Dict, module_parameters):
     return optimizer
 
 
-def init_scheduler_from_cfg(cfg: Dict, optimizer, epochs):
+def init_scheduler_from_cfg(cfg: Optional[Dict], optimizer, epochs):
     if not cfg is None:
         raise NotImplementedError("Scheduler cfg not implemented")
 
