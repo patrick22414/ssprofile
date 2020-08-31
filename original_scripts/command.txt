@@ -1,0 +1,5 @@
+awnas search ./rl_config/rl_cifar10_resnet_fix.yaml --gpu 0 --seed 123 --train-dir ./rl_result/cifar10_resnet_fix --vis-dir ./rl_result/tensorboard/cifar10_resnet_fix
+
+awnas train ./diff_config/diff_final.yaml --gpus 0 --seed 123 --train-dir ./diff_result/final/resnet-fix --save-every 20
+
+awnas train ./rl_config/rl_final.yaml --gpus 0 --seed 123 --train-dir ./rl_result/final/resnet-fix --save-every 20
