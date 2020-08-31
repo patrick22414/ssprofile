@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from _modules import primitive_factory
 
@@ -101,7 +102,7 @@ class SearchSpaceBaseNetwork(nn.Module):
                     self.c_in_list[layer],
                     self.c_out_list[layer],
                     stride,
-                )
+                ).to(self.device)
 
     def _make_backbone_and_classifier(self):
         """Create new backbone and classifer instances using default blocks"""
@@ -121,16 +122,14 @@ class SearchSpaceBaseNetwork(nn.Module):
                 ),
             )
 
-        self.classifier = nn.Sequential(
-            nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-            nn.Linear(self.c_out_list[-1], self.num_classes, bias=False),
-        )
+        self.classifier = nn.Linear(self.c_out_list[-1], self.num_classes, bias=False)
 
         self.backbone.to(self.device)
         self.classifier.to(self.device)
 
     def forward(self, x):
         y = self.backbone(x)
+        y = F.adaptive_avg_pool2d(y, 1).squeeze()
         y = self.classifier(y)
 
         return y
@@ -175,7 +174,12 @@ if __name__ == "__main__":
 
     s = perf_counter()
     ssbn.swap_block(1, new_block=1)
+
     print(ssbn)
+
+    for name, param in ssbn.named_parameters():
+        print(name, list(param.shape), param.requires_grad, param.device)
+
     print("SSBN swap_block time:", perf_counter() - s)
 
     s = perf_counter()
@@ -192,4 +196,13 @@ if __name__ == "__main__":
     )
     ssbn.swap_block(1, new_block=1)
     print(ssbn)
+
+    for name, param in ssbn.named_parameters():
+        print(name, list(param.shape), param.requires_grad, param.device)
+
     print("SSBN __init__ & swap_block time:", perf_counter() - s)
+
+    x = torch.randn(10, 3, 32, 32).to(torch.device("cuda:3"))
+    y = ssbn(x)
+
+    y.view(-1).mean().backward()

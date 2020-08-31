@@ -1,5 +1,7 @@
 from typing import Dict, List, Optional
+
 import torch
+from torch.utils.data import DataLoader
 
 from _networks import SearchSpaceBaseNetwork
 
@@ -24,6 +26,8 @@ class SearchSpaceProfiler:
         c_in_list: List[int],
         c_out_list: List[int],
         num_classes: int,
+        # params for datasets
+        dataloaders: Dict[str, DataLoader],  # eg {"train": ..., "test": ...}
         # others
         cost_latency_coeff: float,
         device: torch.device,
@@ -50,6 +54,8 @@ class SearchSpaceProfiler:
         self.c_in_list = c_in_list
         self.c_out_list = c_out_list
         self.num_classes = num_classes
+
+        self.dataloaders = dataloaders
 
         self.profile_accuracy_on_this_device = device
 
@@ -83,6 +89,8 @@ class SearchSpaceProfiler:
                 device=self.profile_accuracy_on_this_device,
             )
             # first training
+            for epoch in range(self.first_train_epochs):
+                pass
         pass
 
     def profile_latency(self):
@@ -97,28 +105,24 @@ class SearchSpaceProfiler:
     def get_ssbn_identifier(search_space_name, block_indices_for_each_cell_group):
         return f"{search_space_name}_{'_'.join(block_indices_for_each_cell_group)}"
 
+    def init_optimizer_from_cfg(cfg: Dict, module_parameters):
+        assert cfg["type"] in dir(torch.optim), f"Unknown optimizer type {cfg['type']}"
 
-def init_optimizer_from_cfg(cfg: Dict, module_parameters):
-    assert cfg["type"] in dir(torch.optim), f"Unknown optimizer type {cfg['type']}"
+        optimizer_cls = getattr(torch.optim, cfg.pop("type"))
+        optimizer = optimizer_cls(module_parameters, **cfg)
 
-    optimizer_cls = getattr(torch.optim, cfg.pop("type"))
-    optimizer = optimizer_cls(module_parameters, **cfg)
+        return optimizer
 
-    return optimizer
+    def init_scheduler_from_cfg(cfg: Dict, optimizer):
+        assert cfg["type"] in dir(
+            torch.optim.lr_scheduler
+        ), f"Unknown scheduler type {cfg['type']}"
 
+        scheduler_cls = getattr(torch.optim.lr_scheduler, cfg.pop("type"))
+        scheduler = scheduler_cls(optimizer, **cfg)
 
-def init_scheduler_from_cfg(cfg: Optional[Dict], optimizer, epochs):
-    if not cfg is None:
-        raise NotImplementedError("Scheduler cfg not implemented")
-
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=epochs, eta_min=0.001
-    )
-
-    return scheduler
+        return scheduler
 
 
 if __name__ == "__main__":
-    init_optimizer_from_cfg(
-        {"type": "SGD", "lr": 0.1, "momentum": 0.9, "weight_decay": 0.0001,}, []
-    )
+    pass
