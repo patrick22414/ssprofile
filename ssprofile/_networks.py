@@ -1,3 +1,5 @@
+from typing import Dict, List, Optional
+
 import torch
 from torch import nn
 
@@ -10,43 +12,45 @@ class SearchSpaceBaseNetwork(nn.Module):
 
     SSBN functions as a normal PyTorch network. It consists of a backbone (Sequential)
     and a classifier (Global Pool + Linear). The difference is that it remembers its
-    default setting (default_block) and blocks in the backbone can be swapped using
+    default settings (default_block) and blocks in the backbone can be swapped using
     `swap_block`.
-
-    When swapping blocks, SSBN makes backup(s) of the original block in that cell group,
-    if it uses the default block, and restores all other cell groups to the default
-    block. If the swapped cell group is not using the default block, it does not make a
-    back up.
 
     Blocks are 'cell group' based, ie different layers are instances of the same block
     if they belong to the same cell group. When `swap_block` is called, all layers in
     that cell group will change to the new block (backups are made for each of them if
     they originally use the default block).
 
-    FIXME: wait, I think I need to backup the whole default network
-
     Args:
-        primitives: List[str], they are passed to `primitive_factory` to generate a new
-            Module
-        default_block: int, index of the default block in `primitives`
-        num_cell_groups: int
-        cell_layout: List[int]
+        primitives (list of str): they are passed to `primitive_factory` to generate new
+            modules
+        default_block (int): index of the default block in `primitives`
+        num_cell_groups (int): not really used except for checking `cell_layout`
+        cell_layout (list of int): which cell group does each layer belong to
+        reduce_cell_groups (list of int): which cell groups reduce the resolution (will
+            have stride=2)
+        c_in_list (list of int): list of input channels for each layer
+        c_out_list (list of int): list of output channels for each layer
+        num_classes (int): number of output features for classifier
+        device (torch.device): the *active* backbone and classifer will be put on this
+            device
     """
 
     def __init__(
         self,
-        primitives,
-        default_block,
-        num_cell_groups,
-        cell_layout,
-        reduce_cell_groups,
-        num_classes,
-        c_in_list,
-        c_out_list,
+        primitives: List[str],
+        default_block: int,
+        num_cell_groups: int,
+        cell_layout: List[int],
+        reduce_cell_groups: List[int],
+        c_in_list: List[int],
+        c_out_list: List[int],
+        num_classes: int,
+        device: torch.device,
     ):
         super().__init__()
 
         self.primitives = primitives
+        self.default_block = default_block
 
         assert len(set(cell_layout)) == num_cell_groups
 
@@ -60,40 +64,34 @@ class SearchSpaceBaseNetwork(nn.Module):
 
         self.c_in_list = c_in_list
         self.c_out_list = c_out_list
+        self.num_classes = num_classes
+        self.device = device
 
-        self.backbone = nn.Sequential()
-        for cell_group, c_in, c_out in zip(
-            self.cell_layout, self.c_in_list, self.c_out_list
-        ):
-            if cell_group in reduce_cell_groups:
-                stride = 2
-            else:
-                stride = 1
-
-            module = primitive_factory(
-                primitives[default_block], c_in, c_out, stride=stride
-            )
-            self.backbone.add_module(str(len(self.backbone)), module)
-
-        self.classifier = nn.Sequential(
-            nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-            nn.Linear(c_out_list[-1], num_classes, bias=False),
-        )
-
+        self.backbone = nn.Module()
+        self.classifier = nn.Module()
         self.backbone_backup = nn.Module()
         self.classifier_backup = nn.Module()
         self.has_backups = False
 
-    @torch.no_grad()
-    def swap_block(self, cell_group: int, new_block: int, device: torch.device):
+        self._make_backbone_and_classifier()
+
+    def swap_block(self, cell_group: int, new_block: int):
+        """
+        Change the blocks in a cell group to new blocks.
+        Make backups on first call.
+        """
         if not self.has_backups:
-            self.backbone_backup = self.backbone.cpu().requires_grad_(False)
-            self.classifier_backup = self.classifier.cpu().requires_grad_(False)
+            # keep the backups on CPU
+            self.backbone_backup = self.backbone.requires_grad_(False).cpu()
+            self.classifier_backup = self.classifier.requires_grad_(False).cpu()
             self.has_backups = True
 
-        self.backbone = self.backbone_backup.to(device).requires_grad_(True)
-        self.classifier = self.classifier_backup.to(device).requires_grad_(True)
+        # make new modules
+        self._make_backbone_and_classifier()
+        self.backbone.load_state_dict(self.backbone_backup.state_dict())
+        self.classifier.load_state_dict(self.classifier_backup.state_dict())
 
+        # replace the new block
         stride = 2 if cell_group in self.reduce_cell_groups else 1
 
         for layer, layer_cg in enumerate(self.cell_layout):
@@ -105,23 +103,93 @@ class SearchSpaceBaseNetwork(nn.Module):
                     stride,
                 )
 
+    def _make_backbone_and_classifier(self):
+        """Create new backbone and classifer instances using default blocks"""
+        self.backbone = nn.Sequential()
+        for cell_group, c_in, c_out in zip(
+            self.cell_layout, self.c_in_list, self.c_out_list
+        ):
+            if cell_group in self.reduce_cell_groups:
+                stride = 2
+            else:
+                stride = 1
+
+            self.backbone.add_module(
+                name=str(len(self.backbone)),
+                module=primitive_factory(
+                    self.primitives[self.default_block], c_in, c_out, stride=stride
+                ),
+            )
+
+        self.classifier = nn.Sequential(
+            nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+            nn.Linear(self.c_out_list[-1], self.num_classes, bias=False),
+        )
+
+        self.backbone.to(self.device)
+        self.classifier.to(self.device)
+
     def forward(self, x):
-        pass
+        y = self.backbone(x)
+        y = self.classifier(y)
+
+        return y
+
+    def extra_repr(self):
+        active_device = next(self.backbone.parameters()).device
+        backup_device = (
+            next(self.backbone_backup.parameters()).device if self.has_backups else None
+        )
+
+        return f"(active device): {active_device}; (backup device): {backup_device}; (has backups): {self.has_backups}"
+
+    def cuda(*args, **kwargs):
+        raise RuntimeError(
+            "Do not call cuda() on SearchSpaceBaseNetwork, as it needs to keep the submodules and backups on different devices"
+        )
+
+    def to(*args, **kwargs):
+        raise RuntimeError(
+            "Do not call to() on SearchSpaceBaseNetwork, as it needs to keep the submodules and backups on different devices"
+        )
 
 
 # TEST
 if __name__ == "__main__":
+    from time import perf_counter
+
+    s = perf_counter()
     ssbn = SearchSpaceBaseNetwork(
         ["VGGblock_0", "VGGblock_1"],
         default_block=0,
         num_cell_groups=3,
-        cell_layout=[0, 1, 2],
+        cell_layout=[0, 1, 1, 2],
         reduce_cell_groups=[1],
         num_classes=10,
-        c_in_list=[3, 10, 20],
-        c_out_list=[10, 20, 30],
+        c_in_list=[3, 10, 20, 30],
+        c_out_list=[10, 20, 30, 40],
+        device=torch.device("cuda:3"),
     )
-
-    ssbn.swap_block(2, new_block=1, device=torch.device("cpu"))
-
     print(ssbn)
+    print("SSBN __init__ time:", perf_counter() - s)
+
+    s = perf_counter()
+    ssbn.swap_block(1, new_block=1)
+    print(ssbn)
+    print("SSBN swap_block time:", perf_counter() - s)
+
+    s = perf_counter()
+    ssbn = SearchSpaceBaseNetwork(
+        ["Mobileblock_0", "Resblock_1"],
+        default_block=0,
+        num_cell_groups=3,
+        cell_layout=[0, 1, 1, 2],
+        reduce_cell_groups=[1],
+        num_classes=10,
+        c_in_list=[3, 10, 20, 30],
+        c_out_list=[10, 20, 30, 40],
+        device=torch.device("cuda:3"),
+    )
+    ssbn.swap_block(1, new_block=1)
+    print(ssbn)
+    print("SSBN __init__ & swap_block time:", perf_counter() - s)
