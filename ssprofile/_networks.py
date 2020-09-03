@@ -46,7 +46,6 @@ class SearchSpaceBaseNetwork(nn.Module):
         c_in_list: List[int],
         c_out_list: List[int],
         num_classes: int,
-        device: torch.device,
     ):
         super().__init__()
 
@@ -66,46 +65,7 @@ class SearchSpaceBaseNetwork(nn.Module):
         self.c_in_list = c_in_list
         self.c_out_list = c_out_list
         self.num_classes = num_classes
-        self.device = device
 
-        self.backbone = nn.Module()
-        self.classifier = nn.Module()
-        self.backbone_backup = nn.Module()
-        self.classifier_backup = nn.Module()
-        self.has_backups = False
-
-        self._make_backbone_and_classifier()
-
-    def swap_block(self, cell_group: int, new_block: int):
-        """
-        Change the blocks in a cell group to new blocks.
-        Make backups on first call.
-        """
-        if not self.has_backups:
-            # keep the backups on CPU
-            self.backbone_backup = self.backbone.requires_grad_(False).cpu()
-            self.classifier_backup = self.classifier.requires_grad_(False).cpu()
-            self.has_backups = True
-
-        # make new modules
-        self._make_backbone_and_classifier()
-        self.backbone.load_state_dict(self.backbone_backup.state_dict())
-        self.classifier.load_state_dict(self.classifier_backup.state_dict())
-
-        # replace the new block
-        stride = 2 if cell_group in self.reduce_cell_groups else 1
-
-        for layer, layer_cg in enumerate(self.cell_layout):
-            if layer_cg == cell_group:
-                self.backbone[layer] = primitive_factory(
-                    self.primitives[new_block],
-                    self.c_in_list[layer],
-                    self.c_out_list[layer],
-                    stride,
-                ).to(self.device)
-
-    def _make_backbone_and_classifier(self):
-        """Create new backbone and classifer instances using default blocks"""
         self.backbone = nn.Sequential()
         for cell_group, c_in, c_out in zip(
             self.cell_layout, self.c_in_list, self.c_out_list
@@ -122,35 +82,86 @@ class SearchSpaceBaseNetwork(nn.Module):
                 ),
             )
 
+        self.global_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
         self.classifier = nn.Linear(self.c_out_list[-1], self.num_classes, bias=False)
 
-        self.backbone.to(self.device)
-        self.classifier.to(self.device)
+    def swap_block(self, cell_group: int, new_block: int):
+        # make a new network like self
+        new_ssbn = SearchSpaceBaseNetwork(
+            primitives=self.primitives,
+            default_block=self.default_block,
+            num_cell_groups=self.num_cell_groups,
+            cell_layout=self.cell_layout,
+            reduce_cell_groups=self.reduce_cell_groups,
+            c_in_list=self.c_in_list,
+            c_out_list=self.c_out_list,
+            num_classes=self.num_classes,
+        )
+
+        new_ssbn.backbone.load_state_dict(self.backbone.state_dict())
+        new_ssbn.classifier.load_state_dict(self.classifier.state_dict())
+
+        # replace the new block
+        stride = 2 if cell_group in self.reduce_cell_groups else 1
+
+        for layer, layer_cg in enumerate(self.cell_layout):
+            if layer_cg == cell_group:
+                self.backbone[layer] = primitive_factory(
+                    self.primitives[new_block],
+                    self.c_in_list[layer],
+                    self.c_out_list[layer],
+                    stride,
+                )
+
+        return new_ssbn
+
+    # def _make_backbone_and_classifier(self):
+    #     """Create new backbone and classifer instances using default blocks"""
+    #     self.backbone = nn.Sequential()
+    #     for cell_group, c_in, c_out in zip(
+    #         self.cell_layout, self.c_in_list, self.c_out_list
+    #     ):
+    #         if cell_group in self.reduce_cell_groups:
+    #             stride = 2
+    #         else:
+    #             stride = 1
+
+    #         self.backbone.add_module(
+    #             name=str(len(self.backbone)),
+    #             module=primitive_factory(
+    #                 self.primitives[self.default_block], c_in, c_out, stride=stride
+    #             ),
+    #         )
+
+    #     self.classifier = nn.Linear(self.c_out_list[-1], self.num_classes, bias=False)
+
+    #     self.backbone.to(self.device)
+    #     self.classifier.to(self.device)
 
     def forward(self, x):
         y = self.backbone(x)
-        y = F.adaptive_avg_pool2d(y, 1).squeeze()
+        y = self.global_pool(y).squeeze()
         y = self.classifier(y)
 
         return y
 
-    def extra_repr(self):
-        active_device = next(self.backbone.parameters()).device
-        backup_device = (
-            next(self.backbone_backup.parameters()).device if self.has_backups else None
-        )
+    # def extra_repr(self):
+    #     active_device = next(self.backbone.parameters()).device
+    #     backup_device = (
+    #         next(self.backbone_backup.parameters()).device if self.has_backups else None
+    #     )
 
-        return f"(active device): {active_device}; (backup device): {backup_device}; (has backups): {self.has_backups}"
+    #     return f"(active device): {active_device}; (backup device): {backup_device}; (has backups): {self.has_backups}"
 
-    def cuda(*args, **kwargs):
-        raise RuntimeError(
-            "Do not call cuda() on SearchSpaceBaseNetwork, as it needs to keep the submodules and backups on different devices"
-        )
+    # def cuda(*args, **kwargs):
+    #     raise RuntimeError(
+    #         "Do not call cuda() on SearchSpaceBaseNetwork, as it needs to keep the submodules and backups on different devices"
+    #     )
 
-    def to(*args, **kwargs):
-        raise RuntimeError(
-            "Do not call to() on SearchSpaceBaseNetwork, as it needs to keep the submodules and backups on different devices"
-        )
+    # def to(*args, **kwargs):
+    #     raise RuntimeError(
+    #         "Do not call to() on SearchSpaceBaseNetwork, as it needs to keep the submodules and backups on different devices"
+    #     )
 
 
 # TEST
