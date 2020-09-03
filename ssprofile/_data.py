@@ -24,7 +24,7 @@ TEST_SET = CIFAR10(
     root=_utils.get_awnas_dataset_dir("cifar10"),
     train=False,
     transform=transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize(CIFAR10_MEAN, CIFAR10_STD),]
+        [transforms.ToTensor(), transforms.Normalize(CIFAR10_MEAN, CIFAR10_STD)]
     ),
 )
 

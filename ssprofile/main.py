@@ -28,7 +28,7 @@ SS_PROFILER_CFG = {
         "eta_min": 0.0001,
     },
     "finetune_epochs": 5,
-    "finetune_optimizer": {
+    "finetune_optimizer_cfg": {
         "type": "SGD",
         "lr": 0.05,
         "momentum": 0.9,
@@ -59,7 +59,7 @@ def main():
 
     args = parser.parse_args()
 
-    if torch.cuda.is_available() and args.device:
+    if torch.cuda.is_available() and "device" in args:
         torch.cuda.set_device(args.device)
 
     # Get these stuff form YAML cfg
@@ -70,6 +70,8 @@ def main():
         cfg = yaml.safe_load(yi)
 
     profiler = init_profiler_from_cfg(cfg)
+
+    profiler.profile_accuracy()
 
 
 def init_profiler_from_cfg(cfg: dict):
@@ -137,6 +139,8 @@ def init_profiler_from_cfg(cfg: dict):
     print(c_in_list)
     print(c_out_list)
 
+    num_classes = weights_manager_cfg["num_classes"]
+
     return SearchSpaceProfiler(
         search_spaces=search_spaces,
         default_blocks=DEFAULT_BLOCKS,
@@ -146,6 +150,7 @@ def init_profiler_from_cfg(cfg: dict):
         c_in_list=c_in_list,
         c_out_list=c_out_list,
         dataloaders=DATALOADERS,
+        num_classes=num_classes,
         **SS_PROFILER_CFG,
     )
 

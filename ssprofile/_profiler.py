@@ -70,7 +70,7 @@ class SearchSpaceProfiler:
             default_block = self.default_blocks[ss]
 
             # make SSBN_0
-            ssbn_0_id = get_ssbn_identifier(ss, [default_block] * self.num_cell_groups)
+            ssbn_0_id = self.get_ssbn_identifier(ss, [str(default_block)] * self.num_cell_groups)
             ssbn_0 = SearchSpaceBaseNetwork(
                 primitives=primitives,
                 default_block=self.default_blocks[ss],
@@ -82,7 +82,8 @@ class SearchSpaceProfiler:
                 num_classes=self.num_classes,
             )
 
-            ssbn_0.cuda()
+            if torch.cuda.is_available():
+                ssbn_0 = ssbn_0.cuda()
             optimizer = self.make_optimizer_from_cfg(
                 self.first_train_optimizer_cfg, ssbn_0.parameters()
             )
@@ -94,9 +95,14 @@ class SearchSpaceProfiler:
             for epoch in range(self.first_train_epochs):
                 ssbn_0.train()
                 for inputs, targets in self.dataloaders["train"]:
+                    if torch.cuda.is_available():
+                        inputs = inputs.cuda()
+                        targets = targets.cuda()
+
                     optimizer.zero_grad()
                     outputs = ssbn_0(inputs)
                     loss = criterion(outputs, targets)
+                    loss.backward()
                     optimizer.step()
                     scheduler.step()
 
@@ -107,7 +113,7 @@ class SearchSpaceProfiler:
                     # accuracy = calc_accuracy(outputs, accuracy)
                     # self.accuracy_table[ssbn_0_id] = accuracy
 
-            ssbn_0.cpu()
+            ssbn_0 = ssbn_0.cpu()
 
             # make other SSBNs
             for cell_group in range(self.num_cell_groups):
@@ -115,12 +121,13 @@ class SearchSpaceProfiler:
                     if i_block == self.default_blocks:
                         continue
 
-                    block_indices = [default_block] * self.num_cell_groups
-                    block_indices[cell_group] = i_block
-                    ssbn_id = get_ssbn_identifier(ss, block_indices)
+                    block_indices = [str(default_block)] * self.num_cell_groups
+                    block_indices[cell_group] = str(i_block)
+                    ssbn_id = self.get_ssbn_identifier(ss, block_indices)
 
                     ssbn = ssbn_0.swap_block(cell_group, i_block)
-                    ssbn.cuda()
+                    if torch.cuda.is_available():
+                        ssbn = ssbn.cuda()
 
                     optimizer = self.make_optimizer_from_cfg(
                         self.finetune_optimizer_cfg, ssbn.parameters()
@@ -132,9 +139,14 @@ class SearchSpaceProfiler:
                     for epoch in range(self.finetune_epochs):
                         ssbn.train()
                         for inputs, targets in self.dataloaders["train"]:
+                            if torch.cuda.is_available():
+                                inputs = inputs.cuda()
+                                targets = targets.cuda()
+
                             optimizer.zero_grad()
                             outputs = ssbn(inputs)
                             loss = criterion(outputs, targets)
+                            loss.backward()
                             optimizer.step()
                             scheduler.step()
 
