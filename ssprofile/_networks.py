@@ -101,15 +101,15 @@ class SearchSpaceBaseNetwork(nn.Module):
         new_ssbn.backbone.load_state_dict(self.backbone.state_dict())
         new_ssbn.classifier.load_state_dict(self.classifier.state_dict())
 
-        # replace the new block
-        stride = 2 if cell_group in self.reduce_cell_groups else 1
+        # replace the new block in new_ssbn
+        stride = 2 if cell_group in new_ssbn.reduce_cell_groups else 1
 
-        for layer, layer_cg in enumerate(self.cell_layout):
+        for layer, layer_cg in enumerate(new_ssbn.cell_layout):
             if layer_cg == cell_group:
-                self.backbone[layer] = primitive_factory(
-                    self.primitives[new_block],
-                    self.c_in_list[layer],
-                    self.c_out_list[layer],
+                new_ssbn.backbone[layer] = primitive_factory(
+                    new_ssbn.primitives[new_block],
+                    new_ssbn.c_in_list[layer],
+                    new_ssbn.c_out_list[layer],
                     stride,
                 )
 

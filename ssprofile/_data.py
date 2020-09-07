@@ -20,7 +20,7 @@ TRAIN_SET = CIFAR10(
     ),
 )
 
-TEST_SET = CIFAR10(
+VAL_SET = CIFAR10(
     root=_utils.get_awnas_dataset_dir("cifar10"),
     train=False,
     transform=transforms.Compose(
@@ -29,6 +29,6 @@ TEST_SET = CIFAR10(
 )
 
 DATALOADERS = {
-    "train": DataLoader(TRAIN_SET, batch_size=64, shuffle=True, num_workers=4),
-    "test": DataLoader(TEST_SET, batch_size=64, shuffle=False, num_workers=4),
+    "train": DataLoader(TRAIN_SET, batch_size=256, shuffle=True, num_workers=4),
+    "val": DataLoader(VAL_SET, batch_size=256, shuffle=False, num_workers=4),
 }

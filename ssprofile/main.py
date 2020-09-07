@@ -7,11 +7,11 @@ import click
 import torch
 import yaml
 
-from _profiler import SearchSpaceProfiler
 from _data import DATALOADERS
+from _profiler import SearchSpaceProfiler
 
 # Block names must be {search space name}block_{idx}
-DEFAULT_BLOCKS = {"Mobile": 0, "Res": 0, "VGG": 0}
+DEFAULT_BLOCKS = {"Mobile": 1, "Res": 1, "VGG": 1}
 
 # TODO: this cfg block should be written in YAML files
 SS_PROFILER_CFG = {
@@ -73,6 +73,8 @@ def main():
 
     profiler.profile_accuracy()
 
+    pprint(profiler.accuracy_table)
+
 
 def init_profiler_from_cfg(cfg: dict):
     # TODO: add more cfg checks
@@ -116,8 +118,8 @@ def init_profiler_from_cfg(cfg: dict):
             sorted(search_spaces[ss], key=lambda name: int(name.split("_")[-1]))
         )
 
-    print(primitives)
-    print(search_spaces)
+    print("Search spaces:")
+    pprint(search_spaces)
 
     # Process search_space_cfg, get these stuff:
     # - c_in_list
