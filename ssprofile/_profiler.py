@@ -1,5 +1,10 @@
+import contextlib
+import os
+import warnings
 from copy import deepcopy
+from os import path
 from typing import Dict, List, Optional
+import sys
 
 import torch
 from torch import nn, optim
@@ -7,7 +12,8 @@ from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
 from _networks import SearchSpaceBaseNetwork
-from _utils import calc_accuracy, get_lr, total_parameters
+from _utils import calc_accuracy, get_lr, pretty_size, total_parameters
+from pytorch2caffe import pytorch_to_caffe
 
 
 class SearchSpaceProfiler:
@@ -59,11 +65,19 @@ class SearchSpaceProfiler:
 
         self.dataloaders = dataloaders
 
+        self.profile_dir = profile_dir
+        if self.profile_dir is not None:
+            self.checkpoints_dir = path.join(profile_dir, "checkpoints")
+            self.caffemodels_dir = path.join(profile_dir, "caffemodels")
+            os.makedirs(self.profile_dir, exist_ok=True)
+            os.makedirs(self.checkpoints_dir, exist_ok=True)
+            os.makedirs(self.caffemodels_dir, exist_ok=True)
+
         # TODO: how do we name each SSBN in each search space, ie keys in these dicts?
         self.accuracy_table: Dict[str, float] = {}
         self.latency_table: Dict[str, float] = {}
 
-    def profile_accuracy(self):
+    def profile(self):
         criterion = nn.CrossEntropyLoss()
 
         for ss in self.search_spaces:
@@ -113,9 +127,12 @@ class SearchSpaceProfiler:
             )
 
             self.accuracy_table[ssbn_0_id] = mean_val_accuracy
+            self.save_checkpoint(ssbn_0, ssbn_0_id)
 
-            ssbn_0 = ssbn_0.cpu()
-            ssbn_0.requires_grad_(False)
+            ssbn_0.eval()
+            self.save_caffemodel(ssbn_0, ssbn_0_id)
+
+            ssbn_0 = ssbn_0.requires_grad_(False).cpu()
 
             print()
 
@@ -160,20 +177,52 @@ class SearchSpaceProfiler:
                     )
 
                     self.accuracy_table[ssbn_id] = mean_val_accuracy
+                    self.save_checkpoint(ssbn, ssbn_id)
+
+                    ssbn.eval()
+                    self.save_caffemodel(ssbn, ssbn_id)
 
                     count_ssbn += 1
                     print()
 
             print("\n")  # for ss in self.search_spaces:
 
-    def profile_latency(self):
-        pass
+    def save_caffemodel(self, model: nn.Module, model_id: str):
+        redirected_log = path.join(self.caffemodels_dir, f"{model_id}.redirected.log")
+        file_prototxt = path.join(self.caffemodels_dir, f"{model_id}.prototxt")
+        file_caffemodel = path.join(self.caffemodels_dir, f"{model_id}.caffemodel")
 
-    def profile(self):
-        # profile accuracy and latency
-        # compute costs
-        # sort and select search space and blocks
-        pass
+        # redirect all console outputs to file
+        with open(redirected_log, "w") as fo:
+            with contextlib.redirect_stdout(fo):
+                with contextlib.redirect_stderr(fo):
+                    pytorch_to_caffe.trans_net(
+                        model, torch.randn(1, 3, 32, 32).cuda(), model_id
+                    )
+                    pytorch_to_caffe.save_prototxt(file_prototxt)
+                    pytorch_to_caffe.save_caffemodel(file_caffemodel)
+
+        print("Converted to:")
+        print("   ", file_prototxt, pretty_size(path.getsize(file_prototxt)))
+        print("   ", file_caffemodel, pretty_size(path.getsize(file_caffemodel)))
+
+    def save_checkpoint(self, model: nn.Module, model_id: str):
+        if self.profile_dir is None:
+            warnings.warn("Unable to save checkpoints. No profile_dir specified")
+            return
+
+        repr_txt = path.join(self.checkpoints_dir, f"{model_id}.repr.txt")
+        state_dict_pth = path.join(self.checkpoints_dir, f"{model_id}.state_dict.pth")
+
+        with open(repr_txt, "w") as fo:
+            fo.write(repr(model))
+            fo.write("\n")
+
+        torch.save(model.state_dict(), state_dict_pth)
+
+        print("Saved to:")
+        print("   ", repr_txt, pretty_size(path.getsize(repr_txt)))
+        print("   ", state_dict_pth, pretty_size(path.getsize(state_dict_pth)))
 
     @staticmethod
     def get_ssbn_identifier(search_space_name, block_indices_for_each_cell_group):
@@ -203,6 +252,7 @@ class SearchSpaceProfiler:
     def train_and_validate(
         model, name, epochs, criterion, optimizer, scheduler, dataloaders
     ):
+        return -1  # DEBUG
         num_train_minibatch = len(dataloaders["train"])
         num_val_minibatch = len(dataloaders["val"])
 

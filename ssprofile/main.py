@@ -1,6 +1,9 @@
 import argparse
 import re
+import tempfile
 import warnings
+from datetime import datetime
+from os import path
 from pprint import pprint
 
 import click
@@ -25,7 +28,7 @@ SS_PROFILER_CFG = {
     "first_train_scheduler_cfg": {
         "type": "CosineAnnealingLR",
         "T_max": 20,
-        "eta_min": 0.0001,
+        "eta_min": 0.001,
     },
     "finetune_epochs": 5,
     "finetune_optimizer_cfg": {
@@ -37,30 +40,35 @@ SS_PROFILER_CFG = {
     "finetune_scheduler_cfg": {
         "type": "CosineAnnealingLR",
         "T_max": 5,
-        "eta_min": 0.0001,
+        "eta_min": 0.001,
     },
     "cost_latency_coeff": 0.5,
 }
 
 
+def default_profile_dir():
+    return path.join(
+        tempfile.gettempdir(),
+        "ssprofile-" + datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Search space profiling")
-    parser.add_argument(
-        "-i", "--input-yaml", type=str, help="Input YAML file", required=True
-    )
+    parser.add_argument("input_yaml", type=str, help="Input YAML file")
     parser.add_argument("-o", "--output-yaml", type=str, help="Output YAML file")
     parser.add_argument(
         "--gpu", type=int, help="The GPU device to run training and finetuning on"
     )
     parser.add_argument(
-        "--profile-dir", type=str, help="Folder for storing profiling files"
+        "--profile-dir",
+        type=str,
+        help="Folder for storing profiling files",
+        default=default_profile_dir(),
     )
     parser.add_argument("--seed", type=int)
 
     args = parser.parse_args()
-
-    if torch.cuda.is_available() and "device" in args:
-        torch.cuda.set_device(args.device)
 
     # Get these stuff form YAML cfg
     # - c_in_list
@@ -69,14 +77,19 @@ def main():
     with open(args.input_yaml, "r") as yi:
         cfg = yaml.safe_load(yi)
 
-    profiler = init_profiler_from_cfg(cfg)
+    profiler = init_profiler_from_cfg(cfg, args.profile_dir)
 
-    profiler.profile_accuracy()
+    print()
+    if torch.cuda.is_available() and "gpu" in args:
+        with torch.cuda.device(args.gpu):
+            profiler.profile()
+    else:
+        raise RuntimeError("CUDA device not available or not specified")
 
     pprint(profiler.accuracy_table)
 
 
-def init_profiler_from_cfg(cfg: dict):
+def init_profiler_from_cfg(cfg: dict, profile_dir=None):
     # TODO: add more cfg checks
 
     # Process search_space_cfg, get these stuff:
@@ -138,9 +151,6 @@ def init_profiler_from_cfg(cfg: dict):
     assert len(c_in_list) == len(cell_layout), "Not enough C_in for each layer"
     assert len(c_out_list) == len(cell_layout), "Not enough C_out for each layer"
 
-    print(c_in_list)
-    print(c_out_list)
-
     num_classes = weights_manager_cfg["num_classes"]
 
     return SearchSpaceProfiler(
@@ -153,6 +163,7 @@ def init_profiler_from_cfg(cfg: dict):
         c_out_list=c_out_list,
         dataloaders=DATALOADERS,
         num_classes=num_classes,
+        profile_dir=profile_dir,
         **SS_PROFILER_CFG,
     )
 

@@ -36,3 +36,14 @@ def get_lr(scheduler):
         return scheduler.get_last_lr()[0]
     else:
         return scheduler.get_lr()[0]
+
+
+def pretty_size(num, suffix="B"):
+    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+
+        num /= 1024.0
+
+    return "%.1f%s%s" % (num, "Yi", suffix)
+
