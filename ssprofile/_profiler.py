@@ -13,7 +13,9 @@ from torch.utils.data import DataLoader
 
 from _networks import SearchSpaceBaseNetwork
 from _utils import calc_accuracy, get_lr, pretty_size, total_parameters
-from pytorch2caffe import pytorch_to_caffe
+
+# from pytorch2caffe import pytorch_to_caffe
+# from external.nn_tools import pytorch_to_caffe
 
 
 class SearchSpaceProfiler:
@@ -188,23 +190,25 @@ class SearchSpaceProfiler:
             print("\n")  # for ss in self.search_spaces:
 
     def save_caffemodel(self, model: nn.Module, model_id: str):
-        redirected_log = path.join(self.caffemodels_dir, f"{model_id}.redirected.log")
-        file_prototxt = path.join(self.caffemodels_dir, f"{model_id}.prototxt")
-        file_caffemodel = path.join(self.caffemodels_dir, f"{model_id}.caffemodel")
+        raise NotImplementedError
 
-        # redirect all console outputs to file
-        with open(redirected_log, "w") as fo:
-            with contextlib.redirect_stdout(fo):
-                with contextlib.redirect_stderr(fo):
-                    pytorch_to_caffe.trans_net(
-                        model, torch.randn(1, 3, 32, 32).cuda(), model_id
-                    )
-                    pytorch_to_caffe.save_prototxt(file_prototxt)
-                    pytorch_to_caffe.save_caffemodel(file_caffemodel)
+        # redirected_log = path.join(self.caffemodels_dir, f"{model_id}.redirected.log")
+        # file_prototxt = path.join(self.caffemodels_dir, f"{model_id}.prototxt")
+        # file_caffemodel = path.join(self.caffemodels_dir, f"{model_id}.caffemodel")
 
-        print("Converted to:")
-        print("   ", file_prototxt, pretty_size(path.getsize(file_prototxt)))
-        print("   ", file_caffemodel, pretty_size(path.getsize(file_caffemodel)))
+        # # redirect all console outputs to file
+        # with open(redirected_log, "w") as fo:
+        #     with contextlib.redirect_stdout(fo):
+        #         with contextlib.redirect_stderr(fo):
+        #             pytorch_to_caffe.trans_net(
+        #                 model, torch.randn(1, 3, 32, 32).cuda(), model_id
+        #             )
+        #             pytorch_to_caffe.save_prototxt(file_prototxt)
+        #             pytorch_to_caffe.save_caffemodel(file_caffemodel)
+
+        # print("Converted to:")
+        # print("   ", file_prototxt, pretty_size(path.getsize(file_prototxt)))
+        # print("   ", file_caffemodel, pretty_size(path.getsize(file_caffemodel)))
 
     def save_checkpoint(self, model: nn.Module, model_id: str):
         if self.profile_dir is None:

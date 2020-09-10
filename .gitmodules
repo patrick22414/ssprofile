@@ -1,3 +1,0 @@
-[submodule "ssprofile/pytorch2caffe"]
-	path = ssprofile/pytorch2caffe
-	url = https://github.com/zzzDavid/pytorch2caffe.git
