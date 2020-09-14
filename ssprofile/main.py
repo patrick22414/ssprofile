@@ -1,12 +1,13 @@
 import argparse
+import os
 import re
+import shutil
 import tempfile
 import warnings
 from datetime import datetime
 from os import path
 from pprint import pprint
 
-import click
 import torch
 import yaml
 
@@ -55,25 +56,36 @@ def default_profile_dir():
 
 def main():
     parser = argparse.ArgumentParser(description="Search space profiling")
-    parser.add_argument("input_yaml", type=str, help="Input YAML file")
-    parser.add_argument("-o", "--output-yaml", type=str, help="Output YAML file")
+    parser.add_argument("input_yaml", type=str, help="Input .yaml file")
+    parser.add_argument("-o", "--output-yaml", type=str, help="Output .yaml file")
     parser.add_argument(
-        "--gpu", type=int, help="The GPU device to run training and finetuning on"
+        "--gpu", type=int, help="GPU device to run training and finetuning on"
     )
+    parser.add_argument(
+        "--arch-file",
+        type=str,
+        help="DPU architecture .json file as Vitis compile target",
+    )  # TODO: not used yet !!
+    parser.add_argument(
+        "--dpu-url",
+        type=str,
+        help="DPU network location to post .elf file and get latency back",
+    )  # TODO: not used yet !!
     parser.add_argument(
         "--profile-dir",
         type=str,
         help="Folder for storing profiling files",
         default=default_profile_dir(),
     )
-    parser.add_argument("--seed", type=int)
+    parser.add_argument("--seed", type=int)  # TODO: not used yet !!
 
     args = parser.parse_args()
 
-    # Get these stuff form YAML cfg
-    # - c_in_list
-    # - c_out_list
-    # - reduce_layers
+    if path.exists(args.profile_dir):
+        shutil.rmtree(args.profile_dir)
+        os.makedirs(args.profile_dir)
+        shutil.copyfile(args.input_yaml, path.join(args.profile_dir, "input.yaml"))
+
     with open(args.input_yaml, "r") as yi:
         cfg = yaml.safe_load(yi)
 
@@ -81,20 +93,15 @@ def main():
 
     print()
     if torch.cuda.is_available() and "gpu" in args:
-        with torch.cuda.device(args.gpu):
-            profiler.profile()
+        profiler.profile(args.gpu)
     else:
         raise RuntimeError("CUDA device not available or not specified")
-
-    pprint(profiler.accuracy_table)
 
 
 def init_profiler_from_cfg(cfg: dict, profile_dir=None):
     # TODO: add more cfg checks
 
-    # Process search_space_cfg, get these stuff:
-    # - primitives
-    # - search_spaces
+    # Process search_space_cfg
     search_space_cfg = cfg["search_space_cfg"]
     if search_space_cfg["shared_primitives"] is None:
         raise RuntimeError("Profiling needs shared_primitives specified")
@@ -134,10 +141,7 @@ def init_profiler_from_cfg(cfg: dict, profile_dir=None):
     print("Search spaces:")
     pprint(search_spaces)
 
-    # Process search_space_cfg, get these stuff:
-    # - c_in_list
-    # - c_out_list
-    # - num_classes
+    # Process weights_manager_cfg
     weights_manager_cfg = cfg["weights_manager_cfg"]
     if not "cell_group_kwargs" in weights_manager_cfg:
         raise RuntimeError("Cannot find `cell_group_kwargs` in `weights_manager_cfg`")

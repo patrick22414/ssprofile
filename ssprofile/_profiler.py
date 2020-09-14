@@ -1,11 +1,14 @@
 import contextlib
 import os
+import re
+import subprocess
+import sys
 import warnings
 from copy import deepcopy
 from os import path
-from typing import Dict, List, Optional
-import sys
+from typing import Dict, List
 
+import requests
 import torch
 from torch import nn, optim
 from torch.optim import lr_scheduler
@@ -13,9 +16,11 @@ from torch.utils.data import DataLoader
 
 from _networks import SearchSpaceBaseNetwork
 from _utils import calc_accuracy, get_lr, pretty_size, total_parameters
+from external.pytorch2caffe import pytorch_to_caffe
 
-# from pytorch2caffe import pytorch_to_caffe
-# from external.nn_tools import pytorch_to_caffe
+RE_INPUT_LAYER = re.compile(r"^input.*\n(^input_dim.*\n){4}", re.MULTILINE)
+RE_FIRST_BOTTOM = re.compile(r"^  bottom: \"blob1\"", re.MULTILINE)
+RE_DEPLOY_INPUT_LAYER = re.compile(r"", re.MULTILINE)  # TODO
 
 
 class SearchSpaceProfiler:
@@ -42,7 +47,8 @@ class SearchSpaceProfiler:
         finetune_scheduler_cfg: Dict,
         # others
         cost_latency_coeff: float,
-        profile_dir: str = None,
+        profile_dir: str,
+        arch_file: str = "/opt/vitis_ai/compiler/arch/dpuv2/ZCU102/ZCU102.json",
     ):
         super().__init__()
 
@@ -67,19 +73,30 @@ class SearchSpaceProfiler:
 
         self.dataloaders = dataloaders
 
-        self.profile_dir = profile_dir
-        if self.profile_dir is not None:
-            self.checkpoints_dir = path.join(profile_dir, "checkpoints")
-            self.caffemodels_dir = path.join(profile_dir, "caffemodels")
-            os.makedirs(self.profile_dir, exist_ok=True)
-            os.makedirs(self.checkpoints_dir, exist_ok=True)
-            os.makedirs(self.caffemodels_dir, exist_ok=True)
+        self.profile_dir = path.abspath(profile_dir)
+        self.checkpoints_dir = path.join(profile_dir, "checkpoints")
+        self.caffemodels_dir = path.join(profile_dir, "caffemodels")
+        self.vitis_dir = path.join(profile_dir, "vitis")
+        self.log_dir = path.join(profile_dir, "log_files")
+        os.makedirs(self.checkpoints_dir)
+        os.makedirs(self.caffemodels_dir)
+        os.makedirs(self.vitis_dir)
+        os.makedirs(self.log_dir)
 
-        # TODO: how do we name each SSBN in each search space, ie keys in these dicts?
+        self.arch_file = arch_file
+
         self.accuracy_table: Dict[str, float] = {}
         self.latency_table: Dict[str, float] = {}
 
-    def profile(self):
+    def select_search_space(self):
+        """Select search space based on self.accuracy_table and self.latency_table
+        
+        Return:
+            cell_shared_primitives: str
+        """
+        pass
+
+    def profile(self, gpu):
         criterion = nn.CrossEntropyLoss()
 
         for ss in self.search_spaces:
@@ -103,7 +120,7 @@ class SearchSpaceProfiler:
             )
 
             if torch.cuda.is_available():
-                ssbn_0 = ssbn_0.cuda()
+                ssbn_0 = ssbn_0.to(gpu)
 
             optimizer = self.make_optimizer_from_cfg(
                 self.first_train_optimizer_cfg, ssbn_0.parameters()
@@ -126,17 +143,21 @@ class SearchSpaceProfiler:
                 optimizer=optimizer,
                 scheduler=scheduler,
                 dataloaders=self.dataloaders,
+                gpu=gpu,
             )
 
             self.accuracy_table[ssbn_0_id] = mean_val_accuracy
             self.save_checkpoint(ssbn_0, ssbn_0_id)
 
-            ssbn_0.eval()
-            self.save_caffemodel(ssbn_0, ssbn_0_id)
+            # send model to profile latency
+            latency = self.profile_latency(ssbn_0, ssbn_0_id, gpu)
+            self.latency_table[ssbn_0_id] = latency
 
+            # save to CPU to generate other SSBNs
             ssbn_0 = ssbn_0.requires_grad_(False).cpu()
 
             print()
+            continue  # DEBUG
 
             # make other SSBNs
             count_ssbn = 1
@@ -153,7 +174,7 @@ class SearchSpaceProfiler:
                     ssbn = ssbn_0.swap_block(cell_group, i_block)
 
                     if torch.cuda.is_available():
-                        ssbn = ssbn.cuda()
+                        ssbn = ssbn.to(gpu)
 
                     optimizer = self.make_optimizer_from_cfg(
                         self.finetune_optimizer_cfg, ssbn.parameters()
@@ -176,39 +197,120 @@ class SearchSpaceProfiler:
                         optimizer=optimizer,
                         scheduler=scheduler,
                         dataloaders=self.dataloaders,
+                        gpu=gpu,
                     )
 
                     self.accuracy_table[ssbn_id] = mean_val_accuracy
                     self.save_checkpoint(ssbn, ssbn_id)
 
-                    ssbn.eval()
-                    self.save_caffemodel(ssbn, ssbn_id)
+                    # send model to profile latency
+                    latency = self.profile_latency(ssbn, ssbn_id, gpu)
+                    self.latency_table[ssbn_id] = latency
 
                     count_ssbn += 1
                     print()
 
             print("\n")  # for ss in self.search_spaces:
 
-    def save_caffemodel(self, model: nn.Module, model_id: str):
-        raise NotImplementedError
+    def profile_latency(self, model: nn.Module, model_id: str, gpu: int):
+        print(f"{model_id} ready for latency profiling")
 
-        # redirected_log = path.join(self.caffemodels_dir, f"{model_id}.redirected.log")
-        # file_prototxt = path.join(self.caffemodels_dir, f"{model_id}.prototxt")
-        # file_caffemodel = path.join(self.caffemodels_dir, f"{model_id}.caffemodel")
+        is_training = model.training
+        model.eval()
 
-        # # redirect all console outputs to file
-        # with open(redirected_log, "w") as fo:
-        #     with contextlib.redirect_stdout(fo):
-        #         with contextlib.redirect_stderr(fo):
-        #             pytorch_to_caffe.trans_net(
-        #                 model, torch.randn(1, 3, 32, 32).cuda(), model_id
-        #             )
-        #             pytorch_to_caffe.save_prototxt(file_prototxt)
-        #             pytorch_to_caffe.save_caffemodel(file_caffemodel)
+        model_prototxt = path.join(self.caffemodels_dir, f"{model_id}.prototxt")
+        model_caffemodel = path.join(self.caffemodels_dir, f"{model_id}.caffemodel")
 
-        # print("Converted to:")
-        # print("   ", file_prototxt, pretty_size(path.getsize(file_prototxt)))
-        # print("   ", file_caffemodel, pretty_size(path.getsize(file_caffemodel)))
+        quantize_dir = path.join(self.vitis_dir, f"{model_id}_quantize")
+        compile_dir = path.join(self.vitis_dir, f"{model_id}_compile")
+        os.makedirs(quantize_dir)
+        os.makedirs(compile_dir)
+
+        convert_log_file = path.join(self.log_dir, f"{model_id}.convert.log")
+        quantize_log_file = path.join(self.log_dir, f"{model_id}.quantize.log")
+        compile_log_file = path.join(self.log_dir, f"{model_id}.compile.log")
+
+        with open(convert_log_file, "w") as fo:
+            with contextlib.redirect_stdout(fo):
+                with contextlib.redirect_stderr(fo):
+                    pytorch_to_caffe.trans_net(
+                        model, torch.randn(1, 3, 32, 32).to(gpu), model_id
+                    )
+                    pytorch_to_caffe.save_prototxt(model_prototxt)
+                    pytorch_to_caffe.save_caffemodel(model_caffemodel)
+
+        print("Saved model prototxt and caffemodel to:")
+        print("   ", model_prototxt, pretty_size(path.getsize(model_prototxt)))
+        print("   ", model_caffemodel, pretty_size(path.getsize(model_caffemodel)))
+
+        with open(model_prototxt, "r") as fi:
+            new_input_layer = "\n".join(
+                [
+                    "layer {",
+                    '  name: "data"',
+                    '  type: "Input"',
+                    '  top: "data"',
+                    "  input_param { shape: { dim: 1 dim: 3 dim: 32 dim: 32 } }",
+                    "}",
+                    "",
+                ]
+            )
+            content = RE_INPUT_LAYER.sub(new_input_layer, fi.read())
+            content = RE_FIRST_BOTTOM.sub('  bottom: "data"', content)
+
+        with open(model_prototxt, "w") as fo:
+            fo.write(content)
+
+        print("Edited model prototxt:")
+        print("   ", model_prototxt)
+
+        self.vai_q_caffe(
+            model_prototxt, model_caffemodel, gpu, quantize_dir, quantize_log_file
+        )
+
+        print("Saved quantized model to:")
+        print("   ", quantize_dir)
+
+        quantize_deploy_prototxt = path.join(quantize_dir, "deploy.prototxt")
+        quantize_deploy_caffemodel = path.join(quantize_dir, "deploy.caffemodel")
+
+        # TODO: Edit quantized deploy.prototxt for compile
+
+        # self.vai_c_caffe(
+        #     quantize_deploy_prototxt,
+        #     quantize_deploy_caffemodel,
+        #     self.arch_file,
+        #     model_id,
+        #     compile_dir,
+        #     compile_log_file,
+        # )
+
+        elf_file = path.join(compile_dir, f"dpu_{model_id}.elf")
+        latency_file = path.join(self.vitis_dir, f"{model_id}.latency.txt")
+
+        print("Saved compiled ELF file to:")
+        print("   ", elf_file, pretty_size(path.getsize(elf_file)))
+
+        # TODO: send elf file
+
+        # with open(elf_file, "rb") as fb:
+        #     resp = requests.post(
+        #         url="http://192.168.6.144:8055/test_latency/test_latency/",
+        #         files={"file": fb},
+        #         data={"kernel_name": model_id},
+        #     )
+
+        #     if resp.ok:
+        #         with open(latency_file, "w") as fo:
+        #             fo.write(resp.content)
+        #     else:
+        #         raise RuntimeError("Cannot get responce from DPU")
+
+        # TODO: parse latency file and get one float number
+
+        model.train(is_training)
+
+        # return latency
 
     def save_checkpoint(self, model: nn.Module, model_id: str):
         if self.profile_dir is None:
@@ -218,15 +320,58 @@ class SearchSpaceProfiler:
         repr_txt = path.join(self.checkpoints_dir, f"{model_id}.repr.txt")
         state_dict_pth = path.join(self.checkpoints_dir, f"{model_id}.state_dict.pth")
 
-        with open(repr_txt, "w") as fo:
+        with open(repr_txt, "a") as fo:
             fo.write(repr(model))
             fo.write("\n")
 
         torch.save(model.state_dict(), state_dict_pth)
 
-        print("Saved to:")
-        print("   ", repr_txt, pretty_size(path.getsize(repr_txt)))
+        print("Saved state dict and repr text to:")
         print("   ", state_dict_pth, pretty_size(path.getsize(state_dict_pth)))
+        print("   ", repr_txt, pretty_size(path.getsize(repr_txt)))
+
+    @staticmethod
+    def vai_q_caffe(model, weights, gpu, output_dir, log_file):
+        with open(log_file, "a") as fo:
+            res = subprocess.run(
+                "vai_q_caffe quantize"
+                f" -model {model}"
+                f" -weights {weights}"
+                f" -gpu {gpu}"
+                f" -output_dir {output_dir}",
+                shell=True,
+                stdout=fo,
+                stderr=fo,
+            )
+
+            if res.returncode != 0:
+                raise subprocess.SubprocessError(
+                    "Quantize failed when running `vai_q_caffe`\n"
+                    f"Check output and error by `cat {log_file}`"
+                )
+
+    @staticmethod
+    def vai_c_caffe(p, c, arch, net_name, output_dir, log_file):
+        with open(log_file, "w") as fo:
+            res = subprocess.run(
+                "vai_c_caffe"
+                f" --prototxt {p}"
+                f" --caffemodel {c}"
+                f" --arch {arch}"
+                f" --net_name {net_name}"
+                f" --output_dir {output_dir}",
+                shell=True,
+                stdout=fo,
+                stderr=fo,
+            )
+
+            res.check_returncode()
+
+            if res.returncode != 0:
+                raise subprocess.SubprocessError(
+                    "Compile failed when running `vai_c_caffe`\n"
+                    f"Check output and error by `cat {log_file}`"
+                )
 
     @staticmethod
     def get_ssbn_identifier(search_space_name, block_indices_for_each_cell_group):
@@ -254,7 +399,7 @@ class SearchSpaceProfiler:
 
     @staticmethod
     def train_and_validate(
-        model, name, epochs, criterion, optimizer, scheduler, dataloaders
+        model, name, epochs, criterion, optimizer, scheduler, dataloaders, gpu
     ):
         return -1  # DEBUG
         num_train_minibatch = len(dataloaders["train"])
@@ -266,8 +411,8 @@ class SearchSpaceProfiler:
             model.train()
             for i_minibatch, (inputs, targets) in enumerate(dataloaders["train"]):
                 if torch.cuda.is_available():
-                    inputs = inputs.cuda()
-                    targets = targets.cuda()
+                    inputs = inputs.to(gpu)
+                    targets = targets.to(gpu)
 
                 optimizer.zero_grad()
                 outputs = model(inputs)
@@ -290,8 +435,8 @@ class SearchSpaceProfiler:
             mean_val_accuracy = 0.0
             for i_minibatch, (inputs, targets) in enumerate(dataloaders["val"]):
                 if torch.cuda.is_available():
-                    inputs = inputs.cuda()
-                    targets = targets.cuda()
+                    inputs = inputs.to(gpu)
+                    targets = targets.to(gpu)
 
                 outputs = model(inputs)
                 accuracy = calc_accuracy(outputs, targets)
