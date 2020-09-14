@@ -5,16 +5,21 @@ Requires:
 - Python >= 3.6
 
 ## Workflow
-1. Generate all SSBN models. Train or finetune them to get `accuracy_table`. Convert them caffemodels and save.
 
 ```sh
-$ python ssprofile/main.py <path to your YAML> --gpu 0 --profile-dir <path to profile dir>
+$ python ssprofile/main.py <path to your YAML> \
+        --gpu 0 \
+        --arch-file <DPU compile target arch .json> \
+        --dpu-url <DPU network location> \
+        --profile-dir <path to profile dir>
 ```
 
-`prototxt`s, `caffemodel`s, and logs during conversion are saved to `<path to profile dir>/caffemodels`.
+1. Generate all SSBN models. Train or finetune them to get `accuracy_table`. Trained/finetuned PyTorch module state dicts and text representations are saved to `<profile dir>/checkpoints`.
 
-Trained/finetuned PyTorch module state dicts/text representations are saved to `<path to profile dir>/checkpoints`.
+1. Convert to caffemodels and save `prototxt`s, `caffemodel`s, and logs during conversion to `<profile dir>/caffemodels`.
 
-2. **WIP** Compile caffemodels and test latency on hardware.
+1. **WIP** Compile caffemodels and send them to test latency on hardware. Quaitzed models are saved to `<profile dir>/vitis/quantize`. Compiled `.elf` files are saved to `<profile dir>/vitis/compile`.
 
-3. **WIP** Read latency results and get `latency_table`.
+1. **WIP** Read latency results and get `latency_table`.
+
+1. **WIP** Get `cell_shared_primitives` from `accuracy_table` and `latency_table`.
