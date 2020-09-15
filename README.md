@@ -4,15 +4,24 @@ Search space profiling by accuracy and latency.
 Requires:
 - Python >= 3.6
 
-## Workflow
+## Command Line
 
 ```sh
-$ python ssprofile/main.py <path to your YAML> \
-        --gpu 0 \
-        --arch-file <DPU compile target arch .json> \
-        --dpu-url <DPU network location> \
-        --profile-dir <path to profile dir>
+$ python ssprofile/main.py <path to your YAML> --gpu 0 --profile-dir <path to profile dir>
 ```
+
+**!!! BUT THIS WILL NOT WORK RIGHT NOW** because of bugs in `pytorch2caffe`, so please use:
+```sh
+$ DEBUG=1 python ssprofile/main.py test.yaml --gpu 0 --profile-dir tmp
+```
+to see a demo of the program running.
+
+You can check more command line options by
+```sh
+$ python ssprofile/main.py --help
+```
+
+## Workflow
 
 1. Generate all SSBN models. Train or finetune them to get `accuracy_table`. Trained/finetuned PyTorch module state dicts and text representations are saved to `<profile dir>/checkpoints`.
 
@@ -22,4 +31,4 @@ $ python ssprofile/main.py <path to your YAML> \
 
 1. **WIP** Read latency results and get `latency_table`.
 
-1. **WIP** Get `cell_shared_primitives` from `accuracy_table` and `latency_table`.
+1. Get `cell_shared_primitives` from `accuracy_table` and `latency_table`.
