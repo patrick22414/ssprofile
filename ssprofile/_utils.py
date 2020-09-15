@@ -18,7 +18,7 @@ def calc_accuracy(outputs: torch.Tensor, targets: torch.Tensor) -> float:
     predicts = torch.argmax(outputs, dim=1)
     accuracy = (predicts == targets).sum().float() / targets.nelement()
 
-    return accuracy.item() * 100
+    return accuracy.item()
 
 
 def total_parameters(model: torch.nn.Module):

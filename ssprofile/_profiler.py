@@ -310,7 +310,7 @@ class SearchSpaceProfiler:
                         f"{name} Epoch {epoch:2d} -",
                         f"train ({i_minibatch:3d}/{num_train_minibatch:3d})",
                         f"loss: {loss.item():.4f};",
-                        f"acc: {accuracy:.2f}",
+                        f"acc: {accuracy * 100:.2f}",
                     )
 
             scheduler.step()
@@ -334,7 +334,7 @@ class SearchSpaceProfiler:
 
             mean_val_accuracy /= num_val_minibatch
             print(
-                f"{name} Epoch {epoch:2d} - val mean acc: \033[1m{mean_val_accuracy:.2f}\033[0m",
+                f"{name} Epoch {epoch:2d} - val mean acc: \033[1m{mean_val_accuracy * 100:.2f}\033[0m",
             )
 
         return mean_val_accuracy
