@@ -283,7 +283,8 @@ class SearchSpaceProfiler:
         self, model, name, epochs, criterion, optimizer, scheduler, gpu
     ):
         if os.environ["DEBUG"]:
-            return torch.rand(1).item()  # DEBUG
+            print("Random value returned during DEBUG mode for `profile_accuracy`")
+            return torch.rand(1).item()
 
         num_train_minibatch = len(self.dataloaders["train"])
         num_val_minibatch = len(self.dataloaders["val"])
@@ -340,7 +341,8 @@ class SearchSpaceProfiler:
 
     def profile_latency(self, model: nn.Module, model_id: str, gpu: int):
         if os.environ["DEBUG"]:
-            return torch.rand(1).item() * 100  # DEBUG
+            print("Random value returned during DEBUG mode for `profile_latency`")
+            return torch.rand(1).item() * 100
 
         print(f"{model_id} ready for latency profiling")
         is_training = model.training
