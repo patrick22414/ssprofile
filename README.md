@@ -2,7 +2,10 @@
 Search space profiling by accuracy and latency.
 
 Requires:
-- Python >= 3.6
+- Python >= 3.6, for f-strings
+- PyTorch
+- PyYAML, for loading and dumping YAML files
+- requests, for sending .elf files to DPU
 
 ## Command Line
 
