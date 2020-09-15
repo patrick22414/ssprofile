@@ -151,6 +151,8 @@ def main():
             yaml.safe_dump({k: v}, yo)
             yo.write("\n")
 
+    print(f"\n⬆ You can copy this to your yaml file or use {args.output_yaml}")
+
 
 def init_profiler_from_cfg(cfg: dict):
     # TODO: add more cfg checks
