@@ -1,4 +1,5 @@
 import contextlib
+import math
 import os
 import re
 import subprocess
@@ -16,7 +17,6 @@ from torch.utils.data import DataLoader
 
 from _networks import SearchSpaceBaseNetwork
 from _utils import calc_accuracy, get_lr, pretty_size, total_parameters
-from external.pytorch2caffe import pytorch_to_caffe
 
 RE_INPUT_LAYER = re.compile(r"^input.*\n(^input_dim.*\n){4}", re.MULTILINE)
 RE_FIRST_BOTTOM = re.compile(r"^  bottom: \"blob1\"", re.MULTILINE)
@@ -45,10 +45,15 @@ class SearchSpaceProfiler:
         finetune_epochs: int,
         finetune_optimizer_cfg: Dict,
         finetune_scheduler_cfg: Dict,
-        # others
-        cost_latency_coeff: float,
+        # search space selection
+        latency_cost_coeff: float,
+        accuracy_threshold: float,
+        accuracy_cost_scale: float,
+        select_ss_threshold: int,
+        # misc
+        arch_file: str,
+        dpu_url: str,
         profile_dir: str,
-        arch_file: str = "/opt/vitis_ai/compiler/arch/dpuv2/ZCU102/ZCU102.json",
     ):
         super().__init__()
 
@@ -59,6 +64,12 @@ class SearchSpaceProfiler:
         self.cell_layout = cell_layout
         self.reduce_cell_groups = reduce_cell_groups
 
+        self.c_in_list = c_in_list
+        self.c_out_list = c_out_list
+        self.num_classes = num_classes
+
+        self.dataloaders = dataloaders
+
         self.first_train_epochs = first_train_epochs
         self.first_train_optimizer_cfg = first_train_optimizer_cfg
         self.first_train_scheduler_cfg = first_train_scheduler_cfg
@@ -67,11 +78,13 @@ class SearchSpaceProfiler:
         self.finetune_optimizer_cfg = finetune_optimizer_cfg
         self.finetune_scheduler_cfg = finetune_scheduler_cfg
 
-        self.c_in_list = c_in_list
-        self.c_out_list = c_out_list
-        self.num_classes = num_classes
+        self.latency_cost_coeff = latency_cost_coeff
+        self.accuracy_threshold = accuracy_threshold
+        self.accuracy_cost_scale = accuracy_cost_scale
+        self.select_ss_threshold = select_ss_threshold
 
-        self.dataloaders = dataloaders
+        self.arch_file = arch_file
+        self.dpu_url = dpu_url
 
         self.profile_dir = path.abspath(profile_dir)
         self.checkpoints_dir = path.join(profile_dir, "checkpoints")
@@ -83,8 +96,6 @@ class SearchSpaceProfiler:
         os.makedirs(self.vitis_dir)
         os.makedirs(self.log_dir)
 
-        self.arch_file = arch_file
-
         self.accuracy_table: Dict[str, float] = {}
         self.latency_table: Dict[str, float] = {}
 
@@ -94,7 +105,66 @@ class SearchSpaceProfiler:
         Return:
             cell_shared_primitives: str
         """
-        pass
+        # calc cost_total of every model
+        cost_table: Dict[str, float] = {}
+        for model_id in self.accuracy_table:
+            acc = self.accuracy_table[model_id]
+            lat = self.latency_table[model_id]
+
+            cost_acc = math.exp(
+                -(acc - self.accuracy_threshold) / self.accuracy_cost_scale
+            )
+            cost_lat = -1 / lat
+
+            cost_total = cost_acc + self.latency_cost_coeff * cost_lat
+            cost_table[model_id] = cost_total
+
+        # sort models by ascending cost
+        selected_models: Dict[str, List[str]] = {
+            ss: list() for ss in self.search_spaces
+        }
+        selected_ss = None
+        for model_id in sorted(cost_table, key=lambda k: cost_table[k]):
+            for ss in self.search_spaces:
+                if model_id.startswith(ss):
+                    selected_models[ss].append(model_id)
+
+                if len(selected_models[ss]) >= self.select_ss_threshold:
+                    selected_ss = ss
+
+            if selected_ss is not None:
+                break
+        else:
+            raise RuntimeError(
+                f"No search space contains more than {self.select_ss_threshold} SSBNs. Consider lower the `self.select_ss_threshold`"
+            )
+
+        selected_models: List[str] = selected_models[selected_ss]
+
+        print(f"Selected search space: \033[1m{selected_ss}\033[0m")
+        print("Selected search space base networks:")
+        for model_id in selected_models:
+            print("   ", model_id)
+
+        # get the selected primitive indices of each cell group
+        cell_shared_primitives = [set() for _ in range(self.num_cell_groups)]
+        for model_id in selected_models:
+            selected_primitives = [
+                int(prim_idx) for prim_idx in model_id.split("_")[1:]
+            ]
+
+            assert len(selected_primitives) == self.num_cell_groups
+            for i in range(self.num_cell_groups):
+                cell_shared_primitives[i].add(selected_primitives[i])
+
+        # convert the inner set of indices to list of primitives str
+        shared_primitives = self.search_spaces[selected_ss]
+        for i in range(self.num_cell_groups):
+            cell_shared_primitives[i] = [
+                shared_primitives[idx] for idx in sorted(cell_shared_primitives[i])
+            ]
+
+        return cell_shared_primitives
 
     def profile(self, gpu):
         criterion = nn.CrossEntropyLoss()
@@ -135,14 +205,13 @@ class SearchSpaceProfiler:
             )
 
             # first training
-            mean_val_accuracy = self.train_and_validate(
+            mean_val_accuracy = self.profile_accuracy(
                 model=ssbn_0,
                 name="SSBN_0",
                 epochs=self.first_train_epochs,
                 criterion=criterion,
                 optimizer=optimizer,
                 scheduler=scheduler,
-                dataloaders=self.dataloaders,
                 gpu=gpu,
             )
 
@@ -157,7 +226,6 @@ class SearchSpaceProfiler:
             ssbn_0 = ssbn_0.requires_grad_(False).cpu()
 
             print()
-            continue  # DEBUG
 
             # make other SSBNs
             count_ssbn = 1
@@ -189,14 +257,13 @@ class SearchSpaceProfiler:
                     )
 
                     # finetuning
-                    mean_val_accuracy = self.train_and_validate(
+                    mean_val_accuracy = self.profile_accuracy(
                         model=ssbn,
                         name=ssbn_name,
                         epochs=self.finetune_epochs,
                         criterion=criterion,
                         optimizer=optimizer,
                         scheduler=scheduler,
-                        dataloaders=self.dataloaders,
                         gpu=gpu,
                     )
 
@@ -212,9 +279,70 @@ class SearchSpaceProfiler:
 
             print("\n")  # for ss in self.search_spaces:
 
-    def profile_latency(self, model: nn.Module, model_id: str, gpu: int):
-        print(f"{model_id} ready for latency profiling")
+    def profile_accuracy(
+        self, model, name, epochs, criterion, optimizer, scheduler, gpu
+    ):
+        if os.environ["DEBUG"]:
+            return torch.rand(1).item()  # DEBUG
 
+        num_train_minibatch = len(self.dataloaders["train"])
+        num_val_minibatch = len(self.dataloaders["val"])
+
+        for epoch in range(epochs):
+            print(f"{name} Epoch {epoch:2d} - learning rate: {get_lr(scheduler):.6f}")
+
+            model.train()
+            for i_minibatch, (inputs, targets) in enumerate(self.dataloaders["train"]):
+                if torch.cuda.is_available():
+                    inputs = inputs.to(gpu)
+                    targets = targets.to(gpu)
+
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                loss.backward()
+                optimizer.step()
+
+                if i_minibatch % 10 == 0:
+                    accuracy = calc_accuracy(outputs, targets)
+                    print(
+                        f"{name} Epoch {epoch:2d} -",
+                        f"train ({i_minibatch:3d}/{num_train_minibatch:3d})",
+                        f"loss: {loss.item():.4f};",
+                        f"acc: {accuracy:.2f}",
+                    )
+
+            scheduler.step()
+
+            model.eval()
+            mean_val_accuracy = 0.0
+            for i_minibatch, (inputs, targets) in enumerate(self.dataloaders["val"]):
+                if torch.cuda.is_available():
+                    inputs = inputs.to(gpu)
+                    targets = targets.to(gpu)
+
+                outputs = model(inputs)
+                accuracy = calc_accuracy(outputs, targets)
+                mean_val_accuracy += accuracy
+
+                if i_minibatch % 10 == 0:
+                    print(
+                        f"{name} Epoch {epoch:2d} -",
+                        f"val ({i_minibatch:3d}/{num_val_minibatch:3d})",
+                    )
+
+            mean_val_accuracy /= num_val_minibatch
+            print(
+                f"{name} Epoch {epoch:2d} - val mean acc: \033[1m{mean_val_accuracy:.2f}\033[0m",
+            )
+
+        return mean_val_accuracy
+
+    def profile_latency(self, model: nn.Module, model_id: str, gpu: int):
+        if os.environ["DEBUG"]:
+            return torch.rand(1).item() * 100  # DEBUG
+
+        print(f"{model_id} ready for latency profiling")
         is_training = model.training
         model.eval()
 
@@ -229,6 +357,8 @@ class SearchSpaceProfiler:
         convert_log_file = path.join(self.log_dir, f"{model_id}.convert.log")
         quantize_log_file = path.join(self.log_dir, f"{model_id}.quantize.log")
         compile_log_file = path.join(self.log_dir, f"{model_id}.compile.log")
+
+        from external.pytorch2caffe import pytorch_to_caffe
 
         with open(convert_log_file, "w") as fo:
             with contextlib.redirect_stdout(fo):
@@ -276,14 +406,14 @@ class SearchSpaceProfiler:
 
         # TODO: Edit quantized deploy.prototxt for compile
 
-        # self.vai_c_caffe(
-        #     quantize_deploy_prototxt,
-        #     quantize_deploy_caffemodel,
-        #     self.arch_file,
-        #     model_id,
-        #     compile_dir,
-        #     compile_log_file,
-        # )
+        self.vai_c_caffe(
+            quantize_deploy_prototxt,
+            quantize_deploy_caffemodel,
+            self.arch_file,
+            model_id,
+            compile_dir,
+            compile_log_file,
+        )
 
         elf_file = path.join(compile_dir, f"dpu_{model_id}.elf")
         latency_file = path.join(self.vitis_dir, f"{model_id}.latency.txt")
@@ -293,26 +423,27 @@ class SearchSpaceProfiler:
 
         # TODO: send elf file
 
-        # with open(elf_file, "rb") as fb:
-        #     resp = requests.post(
-        #         url="http://192.168.6.144:8055/test_latency/test_latency/",
-        #         files={"file": fb},
-        #         data={"kernel_name": model_id},
-        #     )
+        with open(elf_file, "rb") as fb:
+            resp = requests.post(
+                url=self.dpu_url, files={"file": fb}, data={"kernel_name": model_id},
+            )
 
-        #     if resp.ok:
-        #         with open(latency_file, "w") as fo:
-        #             fo.write(resp.content)
-        #     else:
-        #         raise RuntimeError("Cannot get responce from DPU")
+            if resp.ok:
+                with open(latency_file, "w") as fo:
+                    fo.write(resp.content)
+            else:
+                raise RuntimeError("Cannot get responce from DPU")
 
         # TODO: parse latency file and get one float number
 
         model.train(is_training)
 
-        # return latency
+        return latency
 
     def save_checkpoint(self, model: nn.Module, model_id: str):
+        if os.environ["DEBUG"]:
+            return  # DEBUG
+
         if self.profile_dir is None:
             warnings.warn("Unable to save checkpoints. No profile_dir specified")
             return
@@ -396,64 +527,6 @@ class SearchSpaceProfiler:
         scheduler = scheduler_cls(optimizer, **cfg)
 
         return scheduler
-
-    @staticmethod
-    def train_and_validate(
-        model, name, epochs, criterion, optimizer, scheduler, dataloaders, gpu
-    ):
-        return -1  # DEBUG
-        num_train_minibatch = len(dataloaders["train"])
-        num_val_minibatch = len(dataloaders["val"])
-
-        for epoch in range(epochs):
-            print(f"{name} Epoch {epoch:2d} - learning rate: {get_lr(scheduler):.6f}")
-
-            model.train()
-            for i_minibatch, (inputs, targets) in enumerate(dataloaders["train"]):
-                if torch.cuda.is_available():
-                    inputs = inputs.to(gpu)
-                    targets = targets.to(gpu)
-
-                optimizer.zero_grad()
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                loss.backward()
-                optimizer.step()
-
-                if i_minibatch % 10 == 0:
-                    accuracy = calc_accuracy(outputs, targets)
-                    print(
-                        f"{name} Epoch {epoch:2d} -",
-                        f"train ({i_minibatch:3d}/{num_train_minibatch:3d})",
-                        f"loss: {loss.item():.4f};",
-                        f"acc: {accuracy:.2f}",
-                    )
-
-            scheduler.step()
-
-            model.eval()
-            mean_val_accuracy = 0.0
-            for i_minibatch, (inputs, targets) in enumerate(dataloaders["val"]):
-                if torch.cuda.is_available():
-                    inputs = inputs.to(gpu)
-                    targets = targets.to(gpu)
-
-                outputs = model(inputs)
-                accuracy = calc_accuracy(outputs, targets)
-                mean_val_accuracy += accuracy
-
-                if i_minibatch % 10 == 0:
-                    print(
-                        f"{name} Epoch {epoch:2d} -",
-                        f"val ({i_minibatch:3d}/{num_val_minibatch:3d})",
-                    )
-
-            mean_val_accuracy /= num_val_minibatch
-            print(
-                f"{name} Epoch {epoch:2d} - val mean acc: \033[1m{mean_val_accuracy:.2f}\033[0m",
-            )
-
-        return mean_val_accuracy
 
 
 if __name__ == "__main__":

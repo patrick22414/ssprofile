@@ -7,11 +7,10 @@ import warnings
 from datetime import datetime
 from os import path
 from pprint import pprint
-
+from collections import OrderedDict
 import torch
 import yaml
 
-from _data import DATALOADERS
 from _profiler import SearchSpaceProfiler
 
 # Block names must be {search space name}block_{idx}
@@ -43,7 +42,10 @@ SS_PROFILER_CFG = {
         "T_max": 5,
         "eta_min": 0.001,
     },
-    "cost_latency_coeff": 0.5,
+    "latency_cost_coeff": 0.5,
+    "accuracy_threshold": 0.92,
+    "accuracy_cost_scale": 1.0,
+    "select_ss_threshold": 5,
 }
 
 
@@ -59,27 +61,51 @@ def main():
     parser.add_argument("input_yaml", type=str, help="Input .yaml file")
     parser.add_argument("-o", "--output-yaml", type=str, help="Output .yaml file")
     parser.add_argument(
-        "--gpu", type=int, help="GPU device to run training and finetuning on"
-    )
-    parser.add_argument(
-        "--arch-file",
-        type=str,
-        help="DPU architecture .json file as Vitis compile target",
-    )  # TODO: not used yet !!
-    parser.add_argument(
-        "--dpu-url",
-        type=str,
-        help="DPU network location to post .elf file and get latency back",
-    )  # TODO: not used yet !!
-    parser.add_argument(
         "--profile-dir",
         type=str,
         help="Folder for storing profiling files",
         default=default_profile_dir(),
     )
-    parser.add_argument("--seed", type=int)  # TODO: not used yet !!
+    parser.add_argument(
+        "--arch-file",
+        type=str,
+        help="DPU architecture .json file as Vitis compile target",
+        default="/opt/vitis_ai/compiler/arch/dpuv2/ZCU102/ZCU102.json",
+    )
+    parser.add_argument(
+        "--dpu-url",
+        type=str,
+        help="DPU network location to post .elf file and get latency back",
+        default="http://192.168.6.144:8055/test_latency/test_latency",
+    )
+    parser.add_argument(
+        "--gpu",
+        type=int,
+        help="GPU device to run training and finetuning on",
+        default=0,
+    )
+    parser.add_argument("--seed", type=int)
 
     args = parser.parse_args()
+
+    if args.output_yaml is None:
+        args.output_yaml = path.join(args.profile_dir, "output.yaml")
+
+    print("CLI Args:")
+    for name in vars(args):
+        print(f"    {name:12s}:", vars(args)[name])
+
+    if args.seed is not None:
+        print(f"Turning on reproducibility with seed {args.seed}\n")
+        print(
+            "This may hurt performance, see https://pytorch.org/docs/stable/notes/randomness.html#reproducibility"
+        )
+        print("   ", "torch.manual_seed(args.seed)")
+        torch.manual_seed(args.seed)
+        print("   ", "torch.backends.cudnn.deterministic = True")
+        torch.backends.cudnn.deterministic = True
+        print("   ", "torch.backends.cudnn.benchmark = False")
+        torch.backends.cudnn.benchmark = False
 
     if path.exists(args.profile_dir):
         shutil.rmtree(args.profile_dir)
@@ -87,9 +113,16 @@ def main():
         shutil.copyfile(args.input_yaml, path.join(args.profile_dir, "input.yaml"))
 
     with open(args.input_yaml, "r") as yi:
-        cfg = yaml.safe_load(yi)
+        cfg = OrderedDict(yaml.safe_load(yi))
 
-    profiler = init_profiler_from_cfg(cfg, args.profile_dir)
+    if "ss_profiler_cfg" not in cfg:
+        cfg["ss_profiler_cfg"] = SS_PROFILER_CFG
+
+    cfg["ss_profiler_cfg"]["arch_file"] = args.arch_file
+    cfg["ss_profiler_cfg"]["dpu_url"] = args.dpu_url
+    cfg["ss_profiler_cfg"]["profile_dir"] = args.profile_dir
+
+    profiler = init_profiler_from_cfg(cfg)
 
     print()
     if torch.cuda.is_available() and "gpu" in args:
@@ -97,8 +130,29 @@ def main():
     else:
         raise RuntimeError("CUDA device not available or not specified")
 
+    # print(profiler.accuracy_table)
+    # print(profiler.latency_table)
+    with open(path.join(args.profile_dir, "accuracy_table.yaml"), "w") as fo:
+        for k in sorted(profiler.accuracy_table):
+            yaml.safe_dump({k: profiler.accuracy_table[k]}, fo)
 
-def init_profiler_from_cfg(cfg: dict, profile_dir=None):
+    with open(path.join(args.profile_dir, "latency_table.yaml"), "w") as fo:
+        for k in sorted(profiler.latency_table):
+            yaml.safe_dump({k: profiler.latency_table[k]}, fo)
+
+    cell_shared_primitives = profiler.select_search_space()
+    print(f"\n\033[1mcell_shared_primitives: {cell_shared_primitives}\033[0m")
+
+    cfg["search_space_cfg"]["cell_shared_primitives"] = cell_shared_primitives
+    cfg["search_space_cfg"]["shared_primitives"] = None
+
+    with open(args.output_yaml, "w") as yo:
+        for k, v in cfg.items():
+            yaml.safe_dump({k: v}, yo)
+            yo.write("\n")
+
+
+def init_profiler_from_cfg(cfg: dict):
     # TODO: add more cfg checks
 
     # Process search_space_cfg
@@ -157,6 +211,10 @@ def init_profiler_from_cfg(cfg: dict, profile_dir=None):
 
     num_classes = weights_manager_cfg["num_classes"]
 
+    ss_profiler_cfg = cfg["ss_profiler_cfg"]
+
+    from _data import DATALOADERS
+
     return SearchSpaceProfiler(
         search_spaces=search_spaces,
         default_blocks=DEFAULT_BLOCKS,
@@ -167,8 +225,7 @@ def init_profiler_from_cfg(cfg: dict, profile_dir=None):
         c_out_list=c_out_list,
         dataloaders=DATALOADERS,
         num_classes=num_classes,
-        profile_dir=profile_dir,
-        **SS_PROFILER_CFG,
+        **ss_profiler_cfg,
     )
 
 
