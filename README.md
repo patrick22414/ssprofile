@@ -1,4 +1,6 @@
 # ssprofile
+> Work in progress. Proceed with caution!
+
 Search space profiling by accuracy and latency.
 
 Requires:
