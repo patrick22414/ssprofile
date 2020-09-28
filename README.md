@@ -7,31 +7,58 @@ Requires:
 - PyYAML, for loading and dumping YAML files
 - requests, for sending .elf files to DPU
 
-## Command Line
+## Usage
 
+### Demo
+
+You can use `DEBUG=1` to see a demo of the program running. Or you can use `DEBUG_ACC=1` and `DEBUG_LAT=1` to partially skip accuracy or latency profiling.
 ```sh
-$ python ssprofile/main.py <path to your YAML> --gpu 0 --profile-dir <path to profile dir>
+$ DEBUG=1 python ssprofile/main.py test.yaml --gpu 0 --profile-dir ./tmp
 ```
 
-**!!! BUT THIS WILL NOT WORK RIGHT NOW** because of bugs in `pytorch2caffe`, so please use:
-```sh
-$ DEBUG=1 python ssprofile/main.py test.yaml --gpu 0 --profile-dir tmp
-```
-to see a demo of the program running.
+### Not Demo
 
-You can check more command line options by
+First, start the `auto_deploy` backend on your DPU server.
+```sh
+$ git clone http://192.168.3.224:8081/toolchain/auto_deploy.git. # only work at Novauto
+$ cd auto_deploy && python3 manage.py runserver 0.0.0.0:8055
+```
+
+You will need the [Xilinx Vitis AI](https://github.com/Xilinx/Vitis-AI) GPU docker image to quantize and compile models for DPU latency profiling. Inside the *root folder of this repo*, run
+```sh
+$ docker run -ti -v `pwd`:`pwd` -w `pwd` \
+    --runtime=nvidia \
+    -p 127.0.0.1:80:8080/tcp \
+    xilinx/vitis-ai:latest \
+    bash
+```
+
+Insider the docker container
+```sh
+$ conda activate vitis-ai-caffe
+$ conda install requests pyyaml # (add pytorch if it's not installed)
+```
+
+Check the command line options by
 ```sh
 $ python ssprofile/main.py --help
+```
+
+Run the profiler
+```sh
+$ python ssprofile/main.py <path to your YAML> --gpu 0 --profile-dir <path to profile dir>
 ```
 
 ## Workflow
 
 1. Generate all SSBN models. Train or finetune them to get `accuracy_table`. Trained/finetuned PyTorch module state dicts and text representations are saved to `<profile dir>/checkpoints`.
 
-1. Convert to caffemodels and save `prototxt`s, `caffemodel`s, and logs during conversion to `<profile dir>/caffemodels`.
+1. Convert PyTorch models to caffemodels using `pytorch2caffe`, and save `prototxt`s and `caffemodel`s to `<profile dir>/caffemodels`.
 
-1. **WIP** Compile caffemodels and send them to test latency on hardware. Quaitzed models are saved to `<profile dir>/vitis/quantize`. Compiled `.elf` files are saved to `<profile dir>/vitis/compile`.
+1. Quantize (`vai_q_caffe`) and compile (`vai_c_caffe`) caffemodels. Quaitzed models are saved to `<profile dir>/vitis/XXX_quantize`. Compiled `.elf` files are saved to `<profile dir>/vitis/XXX_compile`.
 
-1. **WIP** Read latency results and get `latency_table`.
+1. Post `.elf` files to DPU server via HTTP and save the responses to `<profile dir>/vitis/XXX.latency.txt`.
+
+1. Read latency results and get `latency_table`.
 
 1. Get `cell_shared_primitives` from `accuracy_table` and `latency_table`.
