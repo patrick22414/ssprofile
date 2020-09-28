@@ -26,7 +26,7 @@ $ cd auto_deploy && python3 manage.py runserver 0.0.0.0:8055
 
 You will need the [Xilinx Vitis AI](https://github.com/Xilinx/Vitis-AI) GPU docker image to quantize and compile models for DPU latency profiling.
 
-Inside the *root folder of this repo*, run
+On you working machine, inside the *root folder of this repo*, run
 ```sh
 $ docker run -ti -v `pwd`:`pwd` -w `pwd` \
     --runtime=nvidia \
@@ -64,3 +64,11 @@ $ python ssprofile/main.py <path to your YAML> --gpu 0 --profile-dir <path to pr
 1. Read latency results and get `latency_table`.
 
 1. Get `cell_shared_primitives` from `accuracy_table` and `latency_table`.
+
+## Known Issues:
+
+1. `pytorch2caffe` -> `vai_q_caffe` -> `vai_c_caffe` occasionally fails right now, especially for VGG networks.
+
+1. Calibration images required by `vai_q_caffe` are hardcoded and only have `32x32` resolution right now.
+
+1. Other issues that I haven't noticed.
