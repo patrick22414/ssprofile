@@ -67,8 +67,8 @@ $ python ssprofile/main.py <path to your YAML> --gpu 0 --profile-dir <path to pr
 
 ## Known Issues:
 
-1. `pytorch2caffe` -> `vai_q_caffe` -> `vai_c_caffe` occasionally fails right now, especially for VGG networks.
+1. `pytorch2caffe` -> `vai_q_caffe` -> `vai_c_caffe` toolchain still fails sometimes, especially for VGG-style networks.
 
-1. Calibration images required by `vai_q_caffe` are hardcoded and only have `32x32` resolution right now.
+1. Calibration images only have `32x32` resolution right now (inside `calib_data`, [Vitis docs](https://www.xilinx.com/html_docs/vitis_ai/1_2/modelquantization.html#tlm1570695754169).
 
 1. Other issues that I haven't noticed.
