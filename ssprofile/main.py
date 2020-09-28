@@ -4,10 +4,11 @@ import re
 import shutil
 import tempfile
 import warnings
+from collections import OrderedDict
 from datetime import datetime
 from os import path
 from pprint import pprint
-from collections import OrderedDict
+
 import torch
 import yaml
 
@@ -18,7 +19,7 @@ DEFAULT_BLOCKS = {"Mobile": 1, "Res": 1, "VGG": 1}
 
 # TODO: this cfg block should be written in YAML files
 SS_PROFILER_CFG = {
-    "first_train_epochs": 20,
+    "first_train_epochs": 1,
     "first_train_optimizer_cfg": {
         "type": "SGD",
         "lr": 0.1,
@@ -30,7 +31,7 @@ SS_PROFILER_CFG = {
         "T_max": 20,
         "eta_min": 0.001,
     },
-    "finetune_epochs": 5,
+    "finetune_epochs": 1,
     "finetune_optimizer_cfg": {
         "type": "SGD",
         "lr": 0.05,
@@ -46,6 +47,10 @@ SS_PROFILER_CFG = {
     "accuracy_threshold": 0.92,
     "accuracy_cost_scale": 1.0,
     "select_ss_threshold": 5,
+    "calib_data": {
+        "source": "calib_data/32x32.txt",
+        "root_folder": "calib_data/32x32/",
+    },
 }
 
 
@@ -76,7 +81,7 @@ def main():
         "--dpu-url",
         type=str,
         help="DPU network location to post .elf file and get latency back",
-        default="http://192.168.6.144:8055/test_latency/test_latency",
+        default="http://192.168.6.144:8055/test_latency/test_latency/",
     )
     parser.add_argument(
         "--gpu",

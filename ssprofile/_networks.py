@@ -82,7 +82,7 @@ class SearchSpaceBaseNetwork(nn.Module):
                 ),
             )
 
-        self.global_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
+        # self.global_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
         self.classifier = nn.Linear(self.c_out_list[-1], self.num_classes, bias=False)
 
     def swap_block(self, cell_group: int, new_block: int):
@@ -140,7 +140,7 @@ class SearchSpaceBaseNetwork(nn.Module):
 
     def forward(self, x):
         y = self.backbone(x)
-        y = self.global_pool(y).squeeze()
+        y = y.mean(3).mean(2)
         y = self.classifier(y)
 
         return y
