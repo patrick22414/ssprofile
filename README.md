@@ -5,7 +5,7 @@ Requires:
 - Python >= 3.6, for f-strings
 - PyTorch
 - PyYAML, for loading and dumping YAML files
-- requests, for sending .elf files to DPU
+- requests, for sending `.elf` files to DPU
 
 ## Usage
 
@@ -24,7 +24,9 @@ $ git clone http://192.168.3.224:8081/toolchain/auto_deploy.git. # only work at 
 $ cd auto_deploy && python3 manage.py runserver 0.0.0.0:8055
 ```
 
-You will need the [Xilinx Vitis AI](https://github.com/Xilinx/Vitis-AI) GPU docker image to quantize and compile models for DPU latency profiling. Inside the *root folder of this repo*, run
+You will need the [Xilinx Vitis AI](https://github.com/Xilinx/Vitis-AI) GPU docker image to quantize and compile models for DPU latency profiling.
+
+Inside the *root folder of this repo*, run
 ```sh
 $ docker run -ti -v `pwd`:`pwd` -w `pwd` \
     --runtime=nvidia \
