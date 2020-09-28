@@ -22,7 +22,7 @@ $ DEBUG=1 python ssprofile/main.py test.yaml --gpu 0 --profile-dir ./tmp
 
 First, start the `auto_deploy` backend on your DPU server.
 ```sh
-$ git clone http://192.168.3.224:8081/toolchain/auto_deploy.git. # only work at Novauto
+$ git clone http://192.168.3.224:8081/toolchain/auto_deploy.git # only works at Novauto
 $ cd auto_deploy && python3 manage.py runserver 0.0.0.0:8055
 ```
 
