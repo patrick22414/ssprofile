@@ -84,10 +84,7 @@ def main():
         default="http://192.168.6.144:8055/test_latency/test_latency/",
     )
     parser.add_argument(
-        "--gpu",
-        type=int,
-        help="GPU device to run training and finetuning on",
-        default=0,
+        "--gpu", type=int, help="GPU device to run training and finetuning on",
     )
     parser.add_argument("--seed", type=int)
 
@@ -98,18 +95,15 @@ def main():
 
     print("CLI Args:")
     for name in vars(args):
-        print(f"    {name:12s}:", vars(args)[name])
+        print(f"    {name:12}:", vars(args)[name])
 
     if args.seed is not None:
         print(f"Turning on reproducibility with seed {args.seed}\n")
         print(
             "This may hurt performance, see https://pytorch.org/docs/stable/notes/randomness.html#reproducibility"
         )
-        print("   ", "torch.manual_seed(args.seed)")
         torch.manual_seed(args.seed)
-        print("   ", "torch.backends.cudnn.deterministic = True")
         torch.backends.cudnn.deterministic = True
-        print("   ", "torch.backends.cudnn.benchmark = False")
         torch.backends.cudnn.benchmark = False
 
     if path.exists(args.profile_dir):
@@ -129,11 +123,15 @@ def main():
 
     profiler = init_profiler_from_cfg(cfg)
 
-    print()
-    if torch.cuda.is_available() and "gpu" in args:
-        profiler.profile(args.gpu)
+    if not torch.cuda.is_available():
+        print("CUDA is not available. Running on CPU\n")
+        profiler.profile()
+    elif args.gpu is None:
+        print("GPU device (--gpu) not specified. Running on CPU\n")
+        profiler.profile()
     else:
-        raise RuntimeError("CUDA device not available or not specified")
+        print()
+        profiler.profile(args.gpu)
 
     # print(profiler.accuracy_table)
     # print(profiler.latency_table)
@@ -156,7 +154,7 @@ def main():
             yaml.safe_dump({k: v}, yo)
             yo.write("\n")
 
-    print(f"\n⬆ You can copy this to your yaml file or use {args.output_yaml}")
+    print(f"\nYou can copy this to your yaml file or check out {args.output_yaml}\n")
 
 
 def init_profiler_from_cfg(cfg: dict):

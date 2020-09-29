@@ -15,8 +15,8 @@ search_space_cfg:
     - Resblock_0
     - Resblock_1
     - Resblock_2
-    # - Resblock_3
-    # - Resblock_4
+    - Resblock_3
+    - Resblock_4
     # - Resblock_5
     # - Resblock_6
     # - Resblock_7
@@ -24,8 +24,8 @@ search_space_cfg:
     - Mobileblock_0
     - Mobileblock_1
     - Mobileblock_2
-    # - Mobileblock_3
-    # - Mobileblock_4
+    - Mobileblock_3
+    - Mobileblock_4
     # - Mobileblock_5
     # - Mobileblock_6
     # - Mobileblock_7
@@ -33,8 +33,8 @@ search_space_cfg:
     - VGGblock_0
     - VGGblock_1
     - VGGblock_2
-    # - VGGblock_3
-    # - VGGblock_4
+    - VGGblock_3
+    - VGGblock_4
     # - VGGblock_5
     # - VGGblock_6
     # - VGGblock_7

@@ -169,7 +169,7 @@ class SearchSpaceProfiler:
 
         return cell_shared_primitives
 
-    def profile(self, gpu):
+    def profile(self, gpu: int = -1):
         criterion = nn.CrossEntropyLoss()
 
         for ss in self.search_spaces:
@@ -192,7 +192,7 @@ class SearchSpaceProfiler:
                 num_classes=self.num_classes,
             )
 
-            if torch.cuda.is_available():
+            if torch.cuda.is_available() and gpu >= 0:
                 ssbn_0 = ssbn_0.to(gpu)
 
             optimizer = self.make_optimizer_from_cfg(
@@ -208,7 +208,7 @@ class SearchSpaceProfiler:
             )
 
             # first training
-            mean_val_accuracy = self.profile_accuracy(
+            accuracy = self.profile_accuracy(
                 model=ssbn_0,
                 name="SSBN_0",
                 epochs=self.first_train_epochs,
@@ -217,15 +217,18 @@ class SearchSpaceProfiler:
                 scheduler=scheduler,
                 gpu=gpu,
             )
-
-            self.accuracy_table[ssbn_0_id] = mean_val_accuracy
+            self.accuracy_table[ssbn_0_id] = accuracy
             self.save_checkpoint(ssbn_0, ssbn_0_id)
+            print(
+                f"SSBN_0 (id: {ssbn_0_id}) - profiled accuracy: \033[1m{accuracy:.4f}\033[0m"
+            )
 
             # send model to profile latency
             latency = self.profile_latency(ssbn_0, ssbn_0_id, gpu)
             self.latency_table[ssbn_0_id] = latency
-
-            print(f"SSBN_0 (id: {ssbn_0_id}) - latency: \033[1m{latency:.4f}\033[0mms")
+            print(
+                f"SSBN_0 (id: {ssbn_0_id}) - profiled latency: \033[1m{latency:.4f}\033[0m"
+            )
 
             # save to CPU to generate other SSBNs
             ssbn_0 = ssbn_0.requires_grad_(False).cpu()
@@ -246,7 +249,7 @@ class SearchSpaceProfiler:
 
                     ssbn = ssbn_0.swap_block(cell_group, i_block)
 
-                    if torch.cuda.is_available():
+                    if torch.cuda.is_available() and gpu >= 0:
                         ssbn = ssbn.to(gpu)
 
                     optimizer = self.make_optimizer_from_cfg(
@@ -262,7 +265,7 @@ class SearchSpaceProfiler:
                     )
 
                     # finetuning
-                    mean_val_accuracy = self.profile_accuracy(
+                    accuracy = self.profile_accuracy(
                         model=ssbn,
                         name=ssbn_name,
                         epochs=self.finetune_epochs,
@@ -271,16 +274,17 @@ class SearchSpaceProfiler:
                         scheduler=scheduler,
                         gpu=gpu,
                     )
-
-                    self.accuracy_table[ssbn_id] = mean_val_accuracy
+                    self.accuracy_table[ssbn_id] = accuracy
                     self.save_checkpoint(ssbn, ssbn_id)
+                    print(
+                        f"{ssbn_name} (id: {ssbn_id}) - profiled accuracy: \033[1m{accuracy:.4f}\033[0m"
+                    )
 
                     # send model to profile latency
                     latency = self.profile_latency(ssbn, ssbn_id, gpu)
                     self.latency_table[ssbn_id] = latency
-
                     print(
-                        f"SSBN_0 (id: {ssbn_0_id}) - latency: \033[1m{latency:.4f}\033[0mms"
+                        f"{ssbn_name} (id: {ssbn_id}) - profiled latency: \033[1m{latency:.4f}\033[0m"
                     )
 
                     count_ssbn += 1
@@ -289,7 +293,7 @@ class SearchSpaceProfiler:
             print("\n")  # for ss in self.search_spaces:
 
     def profile_accuracy(
-        self, model, name, epochs, criterion, optimizer, scheduler, gpu
+        self, model, name, epochs, criterion, optimizer, scheduler, gpu: int = -1
     ):
         if os.environ.get("DEBUG", 0) or os.environ.get("DEBUG_ACC", 0):
             print(">>> Random value returned during DEBUG mode for `profile_accuracy`")
@@ -303,7 +307,7 @@ class SearchSpaceProfiler:
 
             model.train()
             for i_minibatch, (inputs, targets) in enumerate(self.dataloaders["train"]):
-                if torch.cuda.is_available():
+                if torch.cuda.is_available() and gpu >= 0:
                     inputs = inputs.to(gpu)
                     targets = targets.to(gpu)
 
@@ -313,13 +317,13 @@ class SearchSpaceProfiler:
                 loss.backward()
                 optimizer.step()
 
-                if i_minibatch % 10 == 0:
+                if i_minibatch % 50 == 0:
                     accuracy = calc_accuracy(outputs, targets)
                     print(
                         f"{name} Epoch {epoch:2d} -",
                         f"train ({i_minibatch:3d}/{num_train_minibatch:3d})",
                         f"loss: {loss.item():.4f};",
-                        f"acc: {accuracy * 100:.2f}",
+                        f"acc: {accuracy * 100:.2f}%",
                     )
 
             scheduler.step()
@@ -327,7 +331,7 @@ class SearchSpaceProfiler:
             model.eval()
             mean_val_accuracy = 0.0
             for i_minibatch, (inputs, targets) in enumerate(self.dataloaders["val"]):
-                if torch.cuda.is_available():
+                if torch.cuda.is_available() and gpu >= 0:
                     inputs = inputs.to(gpu)
                     targets = targets.to(gpu)
 
@@ -343,15 +347,15 @@ class SearchSpaceProfiler:
 
             mean_val_accuracy /= num_val_minibatch
             print(
-                f"{name} Epoch {epoch:2d} - val mean acc: \033[1m{mean_val_accuracy * 100:.2f}\033[0m",
+                f"{name} Epoch {epoch:2d} - val mean acc: \033[1m{mean_val_accuracy * 100:.2f}\033[0m%",
             )
 
         return mean_val_accuracy
 
-    def profile_latency(self, model: nn.Module, model_id: str, gpu: int):
+    def profile_latency(self, model: nn.Module, model_id: str, gpu: int = -1):
         if os.environ.get("DEBUG", 0) or os.environ.get("DEBUG_LAT", 0):
             print(">>> Random value returned during DEBUG mode for `profile_latency`")
-            return torch.rand(1).item() * 100
+            return torch.rand(1).item()
 
         is_training = model.training
         model.eval()
@@ -376,20 +380,21 @@ class SearchSpaceProfiler:
         quantize_log_file = path.join(self.log_dir, f"{model_id}.quantize.log")
         compile_log_file = path.join(self.log_dir, f"{model_id}.compile.log")
 
-        c, h, w = self.dataloaders["train"].dataset[0][0].shape
         import logging
 
         logging.getLogger().setLevel(logging.WARNING)
         logging.getLogger("Translate::functions").setLevel(logging.WARNING)
 
+        c, h, w = self.dataloaders["train"].dataset[0][0].shape
+        dummy_input = torch.randn(1, c, h, w)
+        if torch.cuda.is_available() and gpu >= 0:
+            dummy_input = dummy_input.to(gpu)
+
         with open(convert_log_file, "w") as fo:
             with redirect_stderr(fo), redirect_stdout(fo):
                 pt2c = torch2caffe.pytorch_to_caffe.pytorch2caffe(model)
                 pt2c.set_input(
-                    torch.randn(1, c, h, w).to(gpu),
-                    new_height=h,
-                    new_width=w,
-                    **self.calib_data,
+                    dummy_input, new_height=h, new_width=w, **self.calib_data,
                 )
                 pt2c.trans_net(model_id)
                 pt2c.save_prototxt(model_prototxt)
@@ -441,8 +446,7 @@ class SearchSpaceProfiler:
         print("   ", elf_file, pretty_size(path.getsize(elf_file)))
         # print("   ", res)
 
-        # send elf file
-
+        # Send elf file
         with open(elf_file, "rb") as fb:
             resp = requests.post(
                 url=self.dpu_url,
@@ -456,7 +460,7 @@ class SearchSpaceProfiler:
             else:
                 raise requests.ConnectionError(f"Got responce from DPU: {resp}")
 
-        # parse latency file and get one float number
+        # Parse latency file and get one float number
         with open(latency_file, "r") as fi:
             latency = []
             for line in fi:
@@ -492,6 +496,9 @@ class SearchSpaceProfiler:
 
     @staticmethod
     def vai_q_caffe(model, weights, gpu, output_dir, log_file):
+        if not torch.cuda.is_available() or gpu < 0:
+            raise RuntimeError("Cannot call `vai_q_caffe` with GPU not available")
+
         with open(log_file, "a") as fo:
             res = subprocess.run(
                 "vai_q_caffe quantize"
